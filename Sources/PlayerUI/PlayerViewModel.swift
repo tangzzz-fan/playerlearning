@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import Observation
 import PlayerCore
 
@@ -31,6 +32,9 @@ public final class PlayerViewModel {
     /// 字幕开关（`P3-T3` 占位，`P4` 接真字幕）。
     public private(set) var subtitles = PlayerSubtitleToggle()
 
+    /// 安全作用域访问记账（外部文件必须持有访问权，且换文件时才释放）。
+    private var fileAccess = PlayerSecurityScopedAccess()
+
     private let controller: PlayerController
     private var pump: Task<Void, Never>?
 
@@ -39,6 +43,12 @@ public final class PlayerViewModel {
     }
 
     public var isPlaying: Bool { state == .playing }
+
+    /// 当前持有安全作用域访问权的文件 URL（`nil` = 没有）。
+    /// 只读窗口：**没有它，"换文件时有没有申请/释放访问权"就是不可验证的**
+    /// （变异测试正是靠它抓到"begin 被删掉也全绿"）。
+    public var accessedFileURL: URL? { fileAccess.active }
+    
 
     /// 进度比例 `0…1`。时长未知时给 `0` —— **不是 `NaN`**：`NaN` 会让进度条布局直接崩。
     public var progress: Double {
@@ -85,6 +95,9 @@ public final class PlayerViewModel {
         endUpdates()
         // 退出播放器必须复位全屏：否则下次进来一开屏就是全屏，用户会以为界面坏了。
         fullscreen.reset()
+        if let previous = fileAccess.end() {
+            previous.stopAccessingSecurityScopedResource()
+        }
         await controller.finishUpdates()
     }
 
@@ -98,6 +111,10 @@ public final class PlayerViewModel {
 
     public func load(_ resource: PlayerResource) async {
         loadFailure = nil
+        // 换文件：先接住新文件的访问权，再释放上一个（顺序反了会在切换瞬间读不到旧文件）。
+        if let previous = fileAccess.begin(resource.url) {
+            previous.stopAccessingSecurityScopedResource()
+        }
         do {
             try await controller.load(resource)
         } catch {

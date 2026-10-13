@@ -47,13 +47,13 @@ fi
 printf '═══ 判定门（G1 + Phase 2 增量）═══\n'
 printf '依据 docs/03 §三 · docs/09 §四 D-a\n\n'
 
-printf '[1/7] PlayerCore 零 UI 框架 import\n'
+printf '[1/8] PlayerCore 零 UI 框架 import\n'
 if grep -rE 'import (SwiftUI|UIKit|AppKit)' Sources/PlayerCore/; then
   fail 'PlayerCore 出现 UI 框架 import（违反 docs/02 施工约束 1）'
 fi
 pass 'PlayerCore 内无 SwiftUI / UIKit / AppKit'
 
-printf '\n[2/7] 根包 swift build\n'
+printf '\n[2/8] 根包 swift build\n'
 if ! swift build "${SWIFT_ESCAPE[@]+"${SWIFT_ESCAPE[@]}"}" > /tmp/gate-build.log 2>&1; then
   # 失败分支**必须给出东西**：匹配不到已知签名时回退打日志末尾（见 P-027）。
   excerpt="$(grep -E 'error:|BUILD FAILED|sandbox_apply' /tmp/gate-build.log | head -30 || true)"
@@ -63,7 +63,7 @@ if ! swift build "${SWIFT_ESCAPE[@]+"${SWIFT_ESCAPE[@]}"}" > /tmp/gate-build.log
 fi
 pass '构建通过'
 
-printf '\n[3/7] 根包 swift test\n'
+printf '\n[3/8] 根包 swift test\n'
 if ! swift test "${SWIFT_ESCAPE[@]+"${SWIFT_ESCAPE[@]}"}" > /tmp/gate-test.log 2>&1; then
   # ⚠️ 两个坑一起防：
   #   1. `grep … | head` 无匹配时退出码非 0，在 `set -e` 下会让**脚本先死掉**，fail 那句根本轮不到；
@@ -93,7 +93,7 @@ if [ "${failedRuns:-0}" -ne 0 ]; then
 fi
 pass '测试全绿'
 
-printf '\n[4/7] MPV 包构建（libmpv 适配器）\n'
+printf '\n[4/8] MPV 包构建（libmpv 适配器）\n'
 # ⚠️ 为什么必须有这一步：`MPV/` 是**独立包**，根包的 build/test 完全看不到它。
 # `P2-T4` 给 PlayerKernelEvent 加了 `.videoSizeChanged`，把 `MPVKernel` 的 switch 打破成非穷尽 ——
 # 根包门禁全绿，**这个编译破坏却一直没被任何信号发现**，直到本机终于有了产物（见 P-034）。
@@ -115,18 +115,18 @@ else
   pass 'MPV 包构建通过'
 fi
 
-printf '\n[5/7] MPV 包测试（真实 libmpv，iOS 模拟器）\n'
+printf '\n[5/8] MPV 包测试（真实 libmpv，iOS 模拟器）\n'
 # ⚠️ 这一步是 `P2-T9` 的剩余一半，也是 `P-034` 的真正解法：
 #    只有"跑"起来才能验证 `/MPVKernel` 的**行为**，而不只是"能编译"。
 #    测试会在模拟器里拉起真实 mpv 实例，素材由 `TestClip` 用 AVAssetWriter **现场生成**
 #    （确定性、零网络、不往仓库塞二进制 —— `P-033`）。
-# ⚠️ 与 [4/7] 同样"存在才跑"：产物不在就没有可测的东西，跳过但**必须说清后果**。
+# ⚠️ 与 [4/8] 同样"存在才跑"：产物不在就没有可测的东西，跳过但**必须说清后果**。
 if [ ! -d "$ROOT/MPV/Library/Libmpv.xcframework" ]; then
-  printf '  SKIP —— 产物未 stage（与 [4/7] 同因）\n'
+  printf '  SKIP —— 产物未 stage（与 [4/8] 同因）\n'
   printf '  ⚠️ 本次**未运行** MPVKernel 的行为测试\n'
 elif ! SIM_UDID="$(pick_simulator)"; then
   printf '  SKIP —— 找不到可用的 iPhone 模拟器\n'
-  printf '  ⚠️ 本次**未运行** MPVKernel 的行为测试（只有 [4/7] 的编译检查）\n'
+  printf '  ⚠️ 本次**未运行** MPVKernel 的行为测试（只有 [4/8] 的编译检查）\n'
 else
   if ! (cd "$ROOT/MPV" && xcodebuild -scheme PlayerMPV \
         -destination "platform=iOS Simulator,id=$SIM_UDID" \
@@ -137,7 +137,7 @@ else
     printf '%s\n' "$excerpt"
     fail 'MPV 包测试失败（日志 /tmp/gate-mpvtest.log）'
   fi
-  # 同 [3/7] 的纪律：**取不到汇总行就是失败**，不能打印空计数还判绿（`P-023`）。
+  # 同 [3/8] 的纪律：**取不到汇总行就是失败**，不能打印空计数还判绿（`P-023`）。
   # ⚠️ 这里**整行取回**而不是 `-o` 截片段：`[^.]*` 会在 "passed after 7.123 seconds" 的
   #    小数点处断掉，打出 "after 7" 这种残句（把签名卡太死的典型后果，见 `P-027`）。
   mpvSummary="$(grep -E 'Test run with [0-9]+ tests?' /tmp/gate-mpvtest.log | tail -1 || true)"
@@ -149,13 +149,13 @@ else
   pass 'MPV 包测试全绿'
 fi
 
-printf '\n[6/7] G2 端到端（Demo 在模拟器里真跑一遍）\n'
+printf '\n[6/8] G2 端到端（Demo 在模拟器里真跑一遍）\n'
 # ⚠️ 为什么单列一步：`[5/7]` 的 MPV 包测试是 **headless**（`vo=null`），
 #    它证明不了"真画面能出来" —— `wid` + MoltenVK + `CAMetalLayer` 这条接线
 #    **只有把 App 真跑起来才覆盖**（docs/10 §三）。
-# ⚠️ 与 [4/7]/[5/7] 同规矩：产物不在或没有可用模拟器就 SKIP，但**必须说清后果**。
+# ⚠️ 与 [4/8]/[5/7] 同规矩：产物不在或没有可用模拟器就 SKIP，但**必须说清后果**。
 if [ ! -d "$ROOT/MPV/Library/Libmpv.xcframework" ]; then
-  printf '  SKIP —— 产物未 stage（与 [4/7] 同因）\n'
+  printf '  SKIP —— 产物未 stage（与 [4/8] 同因）\n'
   printf '  ⚠️ 本次**未验证**端到端出画与性能基线\n'
 elif ! SIM_UDID="$(pick_simulator)"; then
   printf '  SKIP —— 找不到可用的 iPhone 模拟器\n'
@@ -217,7 +217,43 @@ else
   pass 'G2 端到端通过'
 fi
 
-printf '\n[7/7] 变异测试\n'
+printf '\n[7/8] G3 UI 交互（模拟器上真点一遍）\n'
+# ⚠️ 为什么单列：G2 证的是"链路能通"，**证不了"手指点得动"** ——
+#    按钮接线、可点区域、全屏要不要收起宿主外壳，这些只有真点才知道（docs/11 §三）。
+# ⚠️ 与 [4/8]~[6/8] 同规矩：产物不在或没有模拟器就 SKIP，但**必须说清后果**。
+if [ ! -d "$ROOT/MPV/Library/Libmpv.xcframework" ]; then
+  printf '  SKIP —— 产物未 stage（与 [4/8] 同因）\n'
+  printf '  ⚠️ 本次**未验证** UI 可点可拖可全屏\n'
+elif ! SIM_UDID="$(pick_simulator)"; then
+  printf '  SKIP —— 找不到可用的 iPhone 模拟器\n'
+  printf '  ⚠️ 本次**未验证** UI 可点可拖可全屏\n'
+else
+  if ! (cd "$ROOT/Demo" && xcodegen generate \
+        && xcodebuild -project PlayerStackDemo.xcodeproj -scheme PlayerStackDemo \
+             -destination "platform=iOS Simulator,id=$SIM_UDID" \
+             -derivedDataPath DD \
+             "${XCB_ESCAPE[@]+"${XCB_ESCAPE[@]}"}" test) > /tmp/gate-g3.log 2>&1; then
+    excerpt="$(grep -E 'error:|XCTAssert|Test Case .* failed|TEST FAILED' /tmp/gate-g3.log | head -30 || true)"
+    [ -n "$excerpt" ] || excerpt="$(tail -20 /tmp/gate-g3.log)"
+    printf '%s\n' "$excerpt"
+    fail 'G3 UI 测试失败（日志 /tmp/gate-g3.log）'
+  fi
+  # 同 [3/8] 的纪律：**取不到汇总行就是失败**，不能打印空计数还判绿（P-023）。
+  # ⚠️ UI 测试的签名是 XCTest 那套（Swift Testing 驱动不了 XCUIApplication），所以正则也换一套。
+  g3Summary="$(grep -Eo 'Executed [0-9]+ tests?, with [0-9]+ failures?' /tmp/gate-g3.log | tail -1 || true)"
+  if [ -z "$g3Summary" ]; then
+    tail -20 /tmp/gate-g3.log
+    fail 'G3 未产出测试汇总行 —— UI 测试可能根本没执行（P-023）'
+  fi
+  printf '  %s\n' "$g3Summary"
+  if ! grep -q 'TEST SUCCEEDED' /tmp/gate-g3.log; then
+    grep -E 'XCTAssert|Test Case .* failed' /tmp/gate-g3.log | head -20 || true
+    fail 'G3 未报 TEST SUCCEEDED'
+  fi
+  pass 'G3 UI 交互通过（能播 · 能暂停 · 能拖进度 · 能全屏 · 选择器可拉起）'
+fi
+
+printf '\n[8/8] 变异测试\n'
 if ! python3 Tools/mutation_check.py; then
   fail '存在存活或超时的变异体'
 fi

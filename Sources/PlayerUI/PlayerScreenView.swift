@@ -1,10 +1,13 @@
+import PlayerCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// 播放器整屏：**画面 + 控制层**。
 ///
 /// 它不认识任何内核 —— 内核与表面句柄由 App 层装配（见 `PlayerViewModel` 的说明）。
 public struct PlayerScreenView: View {
     @State private var model: PlayerViewModel
+    @State private var isPickingFile = false
     private let surface: WindowEmbedOutput
 
     /// ⚠️ surface **由外部传入**，不在内部创建：`wid` 句柄必须早于内核构造，
@@ -31,7 +34,8 @@ public struct PlayerScreenView: View {
                 onScrubChanged: { model.updateScrub(fraction: $0) },
                 onScrubEnded: { Task { await model.endScrub() } },
                 onToggleFullscreen: { model.toggleFullscreen() },
-                onToggleSubtitles: { model.toggleSubtitles() }
+                onToggleSubtitles: { model.toggleSubtitles() },
+                onOpenFile: { isPickingFile = true }
             )
             if !model.fullscreen.hidesHostChrome {
                 statusLine
@@ -42,6 +46,13 @@ public struct PlayerScreenView: View {
         .ignoresSafeArea(edges: model.fullscreen.hidesHostChrome ? .all : [])
         .task { await model.start() }
         .onDisappear { Task { await model.teardown() } }
+        .fileImporter(
+            isPresented: $isPickingFile,
+            allowedContentTypes: [.movie, .video, .audiovisualContent]
+        ) { result in
+            guard case let .success(url) = result else { return }
+            Task { await model.load(PlayerResource(url: url)) }
+        }
     }
 
     private var videoArea: some View {

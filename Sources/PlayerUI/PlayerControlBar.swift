@@ -19,6 +19,7 @@ public struct PlayerControlBar: View {
     private let onScrubEnded: () -> Void
     private let onToggleFullscreen: () -> Void
     private let onToggleSubtitles: () -> Void
+    private let onOpenFile: () -> Void
 
     public init(
         isPlaying: Bool,
@@ -33,7 +34,8 @@ public struct PlayerControlBar: View {
         onScrubChanged: @escaping (Double) -> Void,
         onScrubEnded: @escaping () -> Void,
         onToggleFullscreen: @escaping () -> Void,
-        onToggleSubtitles: @escaping () -> Void
+        onToggleSubtitles: @escaping () -> Void,
+        onOpenFile: @escaping () -> Void
     ) {
         self.isPlaying = isPlaying
         self.displayTime = displayTime
@@ -48,6 +50,7 @@ public struct PlayerControlBar: View {
         self.onScrubEnded = onScrubEnded
         self.onToggleFullscreen = onToggleFullscreen
         self.onToggleSubtitles = onToggleSubtitles
+        self.onOpenFile = onOpenFile
     }
 
     public var body: some View {
@@ -79,6 +82,11 @@ public struct PlayerControlBar: View {
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("player.duration")
+
+                Button(action: onOpenFile) {
+                    Image(systemName: "folder")
+                }
+                .accessibilityIdentifier("player.openFile")
 
                 Button(action: onToggleSubtitles) {
                     Image(systemName: "captions.bubble")

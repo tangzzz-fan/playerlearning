@@ -135,6 +135,22 @@ struct PlayerViewModelChromeTests {
         await kernel.finishEvents()
     }
 
+    /// ⚠️ 「换文件时申请访问权」这一步必须被断言 —— 否则把 `begin` 整段删掉也全绿
+    /// （变异测试抓到的就是这条）。外部文件不申请访问权就是读不到，是静默失败。
+    @Test
+    func testLoadClaimsAndTeardownReleasesFileAccess() async {
+        let (model, kernel) = await makeModel()
+        let url = URL(fileURLWithPath: "/tmp/external.mkv")
+
+        await model.load(PlayerResource(url: url))
+        #expect(model.accessedFileURL == url, "加载外部文件必须持有访问权")
+
+        await model.teardown()
+        #expect(model.accessedFileURL == nil, "退出必须释放访问权，否则泄漏")
+
+        await kernel.finishEvents()
+    }
+
     @Test
     func testSubtitleToggleIsExposed() async {
         let (model, kernel) = await makeModel()

@@ -367,9 +367,13 @@ MUTATIONS = [
      "        return \"字幕：开\"",
      "subtitle: 标签不再区分有无字幕源"),
     ("Sources/PlayerUI/PlayerViewModel.swift",
-     "        fullscreen.reset()\n        await controller.finishUpdates()",
-     "        await controller.finishUpdates()",
+     "        fullscreen.reset()\n        if let previous = fileAccess.end() {",
+     "        if let previous = fileAccess.end() {",
      "viewModel: 退出时不复位全屏"),
+    ("Sources/PlayerUI/PlayerViewModel.swift",
+     "        if let previous = fileAccess.begin(resource.url) {\n            previous.stopAccessingSecurityScopedResource()\n        }",
+     "",
+     "viewModel: 换文件时不申请访问权（外部文件读不到）"),
 ]
 
 
