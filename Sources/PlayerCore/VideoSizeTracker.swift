@@ -5,7 +5,7 @@ import CoreGraphics
 /// 为什么放在 `PlayerCore`：mpv 的 `width` / `height` 是两个独立属性、回调时机不保证成对，
 /// 直接各自上报会先给出一个「半截尺寸」（如 `1920×0`）让 UI 闪一下。
 /// 这段合成逻辑**没有 I/O、没有 C 依赖**，放 Core 才能被门禁覆盖
-/// —— 否则它只能待在 `MPV/` 包里，而那是个在本机无法构建的包（见 `docs/10`）。
+/// —— 否则它只能待在 `MPV/` 包里，而那个包跑不了单测（见 `docs/PITFALLS.md` `P-034`）。
 public struct VideoSizeTracker: Sendable, Equatable {
     public private(set) var size: CGSize = .zero
 

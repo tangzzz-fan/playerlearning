@@ -26,14 +26,21 @@ public struct PlayerStateMachine: Sendable {
     }
 
     private static func isLegal(from current: PlayerState, to newState: PlayerState) -> Bool {
-        switch (current, newState) {
+        // `.failed` 是**唯一一条与源态无关**的边：只要播放器已经动过，任何时刻都可能收到失败。
+        // 曾把 `.idle` / `.readyToPlay` / `.paused` / `.finished` → `.failed` 列为非法，
+        // 后果不是"更严格"，而是**失败被静默吞掉** —— 装配层对非 `.applied` 直接 `return`，
+        // 于是内核报了失败、事件流里却什么都没有，UI 永远停在原状态（见 docs/03 §Phase 2 反转记录）。
+        if newState == .failed {
+            return true
+        }
+        return switch (current, newState) {
         case (.idle, .preparing):
             true
-        case (.preparing, .readyToPlay), (.preparing, .failed):
+        case (.preparing, .readyToPlay):
             true
         case (.readyToPlay, .playing), (.readyToPlay, .preparing), (.readyToPlay, .idle):
             true
-        case (.playing, .paused), (.playing, .finished), (.playing, .failed),
+        case (.playing, .paused), (.playing, .finished),
              (.playing, .preparing), (.playing, .idle):
             true
         case (.paused, .playing), (.paused, .finished), (.paused, .preparing), (.paused, .idle):

@@ -148,6 +148,54 @@ struct PlayerControllerTests {
     }
 
     @Test
+    func testFailureReportedWhenItArrivesWhileReadyToPlay() async throws {
+        var fixture = await makeFixture(duration: 60)
+
+        try await fixture.controller.load(fixture.resource)
+        await fixture.kernel.emit(.stateChanged(.failed))
+
+        let updates = await fixture.updates()
+
+        #expect(
+            updates == [
+                .stateChanged(.preparing),
+                .stateChanged(.readyToPlay),
+                .timeChanged(PlayerTimeUpdate(currentTime: 0, duration: 60)),
+                .stateChanged(.failed),
+            ],
+            "FILE_LOADED 之后、pause 回执之前失败也必须上报（否则失败被状态机吞掉）"
+        )
+        let snapshot = await fixture.controller.snapshot()
+        #expect(snapshot.state == .failed)
+    }
+
+    @Test
+    func testFailureReportedWhenItArrivesWhilePaused() async throws {
+        var fixture = await makeFixture(duration: 60)
+
+        try await fixture.controller.load(fixture.resource)
+        await fixture.controller.play()
+        await fixture.controller.pause()
+        await fixture.kernel.emit(.stateChanged(.failed))
+
+        let updates = await fixture.updates()
+
+        #expect(
+            updates == [
+                .stateChanged(.preparing),
+                .stateChanged(.readyToPlay),
+                .timeChanged(PlayerTimeUpdate(currentTime: 0, duration: 60)),
+                .stateChanged(.playing),
+                .stateChanged(.paused),
+                .stateChanged(.failed),
+            ],
+            "暂停中流断掉也必须上报"
+        )
+        let snapshot = await fixture.controller.snapshot()
+        #expect(snapshot.state == .failed)
+    }
+
+    @Test
     func testTimeUpdatesHonorConfiguredInterval() async throws {
         var fixture = await makeFixture(interval: 0.5, duration: 60)
 

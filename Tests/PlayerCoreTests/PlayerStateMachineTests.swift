@@ -23,6 +23,10 @@ struct PlayerStateMachineTests {
         (.finished, .idle),
         (.failed, .preparing),
         (.failed, .idle),
+        (.idle, .failed),
+        (.readyToPlay, .failed),
+        (.paused, .failed),
+        (.finished, .failed),
     ]
 
     private let illegalTransitions: [(PlayerState, PlayerState)] = [
@@ -30,19 +34,15 @@ struct PlayerStateMachineTests {
         (.idle, .paused),
         (.idle, .readyToPlay),
         (.idle, .finished),
-        (.idle, .failed),
         (.preparing, .playing),
         (.preparing, .paused),
         (.preparing, .idle),
         (.readyToPlay, .paused),
         (.readyToPlay, .finished),
-        (.readyToPlay, .failed),
         (.playing, .readyToPlay),
         (.paused, .readyToPlay),
-        (.paused, .failed),
         (.finished, .playing),
         (.finished, .paused),
-        (.finished, .failed),
         (.failed, .playing),
         (.failed, .paused),
         (.failed, .finished),
@@ -79,6 +79,21 @@ struct PlayerStateMachineTests {
 
             #expect(outcome == .rejected, "\(from) → \(to) 应被拒绝")
             #expect(machine.state == from, "\(from) → \(to) 被拒后状态不应改变")
+        }
+    }
+
+    @Test
+    func testFailureIsReachableFromEveryState() {
+        for from in allStates {
+            var machine = PlayerStateMachine(state: from)
+
+            let outcome = machine.transition(to: .failed)
+
+            #expect(
+                outcome != .rejected,
+                "\(from) → .failed 不得被拒绝：装配层对非 .applied 是静默 return，被拒的失败会从事件流里消失，UI 永远停在原状态"
+            )
+            #expect(machine.state == .failed, "\(from) → .failed 后状态应为 .failed")
         }
     }
 
