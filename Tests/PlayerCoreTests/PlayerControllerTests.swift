@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Testing
 @testable import PlayerCore
@@ -40,11 +41,13 @@ private struct ControllerFixture {
     }
 }
 
-private func makeFixture(    interval: Double = PlayerTimeModel.defaultInterval,
+private func makeFixture(
+    interval: Double = PlayerTimeModel.defaultInterval,
     duration: Double = 0,
+    naturalSize: CGSize = .zero,
     loadError: (any Error)? = nil
 ) async -> ControllerFixture {
-    let kernel = FakeKernel(duration: duration, loadError: loadError)
+    let kernel = FakeKernel(duration: duration, naturalSize: naturalSize, loadError: loadError)
     let controller = PlayerController(kernel: kernel, timeInterval: interval)
     let updates = await controller.start()
     return ControllerFixture(controller: controller, kernel: kernel, probe: StreamProbe(updates))
@@ -52,6 +55,30 @@ private func makeFixture(    interval: Double = PlayerTimeModel.defaultInterval,
 
 @Suite
 struct PlayerControllerTests {
+    @Test
+    func testVideoSizeIsEmittedOnlyWhenItChanges() async throws {
+        var fixture = await makeFixture(duration: 60, naturalSize: CGSize(width: 1920, height: 1080))
+
+        try await fixture.controller.load(fixture.resource)
+        await fixture.kernel.emit(.videoSizeChanged(CGSize(width: 1920, height: 1080)))
+        await fixture.kernel.emit(.videoSizeChanged(CGSize(width: 1280, height: 720)))
+
+        let updates = await fixture.updates()
+
+        #expect(
+            updates == [
+                .stateChanged(.preparing),
+                .stateChanged(.readyToPlay),
+                .timeChanged(PlayerTimeUpdate(currentTime: 0, duration: 60)),
+                .videoSizeChanged(CGSize(width: 1920, height: 1080)),
+                .videoSizeChanged(CGSize(width: 1280, height: 720)),
+            ],
+            "重复的同尺寸不应上报"
+        )
+        let snapshot = await fixture.controller.snapshot()
+        #expect(snapshot.naturalSize == CGSize(width: 1280, height: 720))
+    }
+
     @Test
     func testSnapshotBeforeStartIsIdleAndEmpty() async {
         let controller = PlayerController(kernel: FakeKernel())
@@ -62,6 +89,7 @@ struct PlayerControllerTests {
         #expect(snapshot.state == .idle)
         #expect(snapshot.duration == 0)
         #expect(!snapshot.isBuffering)
+        #expect(snapshot.naturalSize == .zero)
     }
 
     @Test

@@ -123,8 +123,8 @@ playerlearning/
 | `P2-T1` | `MPVKernel` 生命周期 + 事件循环 | ✅（编译层） |
 | `P2-T2` | `VideoOutputProtocol` + `WindowEmbedOutput`（`wid`） | ✅ |
 | `P2-T3` | **装配层 `PlayerController`** —— 内核事件流的唯一消费者 + 扇出 | ✅（同日完成测试框架迁移 → Swift Testing、xcodegen scheme、门禁管道修复） |
-| `P2-T4` | `PlayerKernelSnapshot` 加 `naturalSize`（跨层，与 T5 同批） | ⬅ **下一步** |
-| `P2-T5` | 属性映射补全 + `pause` 改 observe（取消乐观 emit） | 待开始 |
+| `P2-T4` | `PlayerKernelSnapshot` 加 `naturalSize`（跨层，与 T5 同批） | ✅ |
+| `P2-T5` | 属性映射补全 + `pause` 改 observe（取消乐观 emit） | ⬅ **下一步** |
 | `P2-T6` | `END_FILE` 区分错误 → `.failed` | 待开始 |
 | `P2-T7` | `attach` 时序收口 + wakeup 回调 `passRetained` | 待开始 |
 | `P2-T8` | 播放控制 + `seek` 用 `absolute+exact`（钳制归装配层） | 待开始 |

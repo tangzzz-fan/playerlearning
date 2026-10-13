@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Testing
 @testable import PlayerCore
@@ -56,7 +57,31 @@ struct FakeKernelTests {
         #expect(first == .stateChanged(.preparing))
         #expect(second == .stateChanged(.readyToPlay))
         #expect(third == .durationChanged(42))
-        #expect(beyond == nil)
+        #expect(beyond == nil, "尺寸未知（.zero）时不应上报一个假尺寸")
+    }
+
+    @Test
+    func testLoadReportsScriptedNaturalSize() async throws {
+        let kernel = FakeKernel(duration: 42, naturalSize: CGSize(width: 1920, height: 1080))
+        var iterator = (await kernel.events()).makeAsyncIterator()
+
+        try await kernel.load(PlayerResource(url: URL(fileURLWithPath: "/tmp/sample.mkv")))
+        await kernel.finishEvents()
+
+        _ = await iterator.next()
+        _ = await iterator.next()
+        _ = await iterator.next()
+        let size = await iterator.next()
+        let snapshot = await kernel.snapshot()
+        #expect(size == .videoSizeChanged(CGSize(width: 1920, height: 1080)))
+        #expect(snapshot.naturalSize == CGSize(width: 1920, height: 1080))
+    }
+
+    @Test
+    func testInitialSnapshotHasZeroNaturalSize() async {
+        let snapshot = await FakeKernel().snapshot()
+
+        #expect(snapshot.naturalSize == .zero)
     }
 
     @Test

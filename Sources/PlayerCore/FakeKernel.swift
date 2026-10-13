@@ -1,3 +1,5 @@
+import CoreGraphics
+
 public actor FakeKernel: PlayerKernelProtocol {
     public private(set) var loadedResources: [PlayerResource] = []
     public private(set) var seekRequests: [Double] = []
@@ -6,20 +8,24 @@ public actor FakeKernel: PlayerKernelProtocol {
     public private(set) var stopCallCount = 0
 
     private let scriptedDuration: Double
+    private let scriptedNaturalSize: CGSize
     private let scriptedLoadError: (any Error)?
     private var state: PlayerState = .idle
     private var duration: Double = 0
     private var currentTime: Double = 0
     private var isBuffering = false
+    private var naturalSize: CGSize = .zero
     private var continuation: AsyncStream<PlayerKernelEvent>.Continuation?
 
     public init() {
         scriptedDuration = 0
+        scriptedNaturalSize = .zero
         scriptedLoadError = nil
     }
 
-    public init(duration: Double = 0, loadError: (any Error)? = nil) {
+    public init(duration: Double = 0, naturalSize: CGSize = .zero, loadError: (any Error)? = nil) {
         scriptedDuration = duration
+        scriptedNaturalSize = naturalSize
         scriptedLoadError = loadError
     }
 
@@ -32,6 +38,10 @@ public actor FakeKernel: PlayerKernelProtocol {
         loadedResources.append(resource)
         emit(.stateChanged(.readyToPlay))
         emit(.durationChanged(scriptedDuration))
+        // 尺寸未知（.zero）时**不上报** —— 真内核拿不到 width/height 时也不该报一个假尺寸。
+        if scriptedNaturalSize != .zero {
+            emit(.videoSizeChanged(scriptedNaturalSize))
+        }
     }
 
     public func play() async {
@@ -69,7 +79,8 @@ public actor FakeKernel: PlayerKernelProtocol {
             state: state,
             currentTime: currentTime,
             duration: duration,
-            isBuffering: isBuffering
+            isBuffering: isBuffering,
+            naturalSize: naturalSize
         )
     }
 
@@ -88,6 +99,8 @@ public actor FakeKernel: PlayerKernelProtocol {
             duration = seconds
         case .bufferingChanged(let flag):
             isBuffering = flag
+        case .videoSizeChanged(let size):
+            naturalSize = size
         }
     }
 }

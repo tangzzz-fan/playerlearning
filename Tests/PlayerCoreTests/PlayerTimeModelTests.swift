@@ -1,3 +1,4 @@
+import CoreGraphics
 import Testing
 @testable import PlayerCore
 
@@ -159,6 +160,15 @@ struct PlayerTimeModelTests {
         var model = PlayerTimeModel()
 
         let update = model.apply(.stateChanged(.playing))
+
+        #expect(update == nil)
+    }
+
+    @Test
+    func testVideoSizeEventProducesNoUpdate() {
+        var model = PlayerTimeModel()
+
+        let update = model.apply(.videoSizeChanged(CGSize(width: 1920, height: 1080)))
 
         #expect(update == nil)
     }

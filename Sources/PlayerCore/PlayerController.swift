@@ -1,8 +1,11 @@
+import CoreGraphics
+
 public actor PlayerController {
     private let kernel: any PlayerKernelProtocol
     private var machine: PlayerStateMachine
     private var time: PlayerTimeModel
     private var isBuffering = false
+    private var naturalSize: CGSize = .zero
     private var continuation: AsyncStream<PlayerControllerUpdate>.Continuation?
     private var pump: Task<Void, Never>?
 
@@ -35,7 +38,8 @@ public actor PlayerController {
             state: machine.state,
             currentTime: time.currentTime,
             duration: time.duration,
-            isBuffering: isBuffering
+            isBuffering: isBuffering,
+            naturalSize: naturalSize
         )
     }
 
@@ -75,6 +79,10 @@ public actor PlayerController {
             guard flag != isBuffering else { return }
             isBuffering = flag
             continuation?.yield(.bufferingChanged(flag))
+        case .videoSizeChanged(let size):
+            guard size != naturalSize else { return }
+            naturalSize = size
+            continuation?.yield(.videoSizeChanged(size))
         }
     }
 

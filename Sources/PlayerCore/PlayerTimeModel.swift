@@ -23,7 +23,7 @@ public struct PlayerTimeModel: Sendable {
         case .durationChanged(let seconds):
             duration = Self.normalizedDuration(seconds)
             return publish()
-        case .stateChanged, .bufferingChanged:
+        case .stateChanged, .bufferingChanged, .videoSizeChanged:
             return nil
         }
     }
