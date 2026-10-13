@@ -1,4 +1,5 @@
 #if canImport(Libmpv)
+import CoreGraphics
 import Foundation
 import Libmpv
 import PlayerCore
@@ -30,6 +31,8 @@ public actor MPVKernel: PlayerKernelProtocol {
     private var currentTime: Double = 0
     private var duration: Double = 0
     private var isBuffering = false
+    private var naturalSize: CGSize = .zero
+    private var videoSizeTracker = VideoSizeTracker()
 
     public init() {}
 
@@ -44,7 +47,8 @@ public actor MPVKernel: PlayerKernelProtocol {
             state: state,
             currentTime: currentTime,
             duration: duration,
-            isBuffering: isBuffering
+            isBuffering: isBuffering,
+            naturalSize: naturalSize
         )
     }
 
@@ -54,16 +58,18 @@ public actor MPVKernel: PlayerKernelProtocol {
         try send(handle, ["loadfile", resource.url.absoluteString, "replace"])
     }
 
+    /// **不在这里上报状态。** `pause` 是 mpv 的**权威可观测属性**，状态一律由 `applyProperty` 观察得到
+    /// ⇒ 命令只负责"发出请求"，状态由内核回执。这样 mpv 内部产生的暂停（缓存 / EOF / `keep-open`）也不会漏。
+    /// 对照：`load()` 的 `.preparing` 与 `stop()` 的 `.idle` **没有**对应的可观测属性，才保留乐观上报。
     public func play() async {
         guard let handle = owner?.pointer else { return }
         setProperty(handle, "pause", "no")
-        emit(.stateChanged(.playing))
     }
 
+    /// 理由同 `play()`。
     public func pause() async {
         guard let handle = owner?.pointer else { return }
         setProperty(handle, "pause", "yes")
-        emit(.stateChanged(.paused))
     }
 
     public func stop() async {
@@ -138,6 +144,11 @@ public actor MPVKernel: PlayerKernelProtocol {
         _ = mpv_observe_property(handle, 0, "time-pos", MPV_FORMAT_DOUBLE)
         _ = mpv_observe_property(handle, 0, "duration", MPV_FORMAT_DOUBLE)
         _ = mpv_observe_property(handle, 0, "paused-for-cache", MPV_FORMAT_FLAG)
+        // `pause` 是播放/暂停状态的权威来源（`play()`/`pause()` 不再乐观上报）。
+        _ = mpv_observe_property(handle, 0, "pause", MPV_FORMAT_FLAG)
+        // `width`/`height` 是两个**独立**属性、回调时机不保证成对 ⇒ 交给 VideoSizeTracker 合成。
+        _ = mpv_observe_property(handle, 0, "width", MPV_FORMAT_INT64)
+        _ = mpv_observe_property(handle, 0, "height", MPV_FORMAT_INT64)
     }
 
     private nonisolated func installWakeupCallback(_ handle: OpaquePointer) {
@@ -185,6 +196,18 @@ public actor MPVKernel: PlayerKernelProtocol {
             emit(.durationChanged(UnsafePointer<Double>(OpaquePointer(data)).pointee))
         case "paused-for-cache":
             emit(.bufferingChanged(UnsafePointer<Int32>(OpaquePointer(data)).pointee != 0))
+        case "pause":
+            emit(.stateChanged(UnsafePointer<Int32>(OpaquePointer(data)).pointee != 0 ? .paused : .playing))
+        case "width":
+            let width = Int(UnsafePointer<Int64>(OpaquePointer(data)).pointee)
+            if let size = videoSizeTracker.setWidth(width) {
+                emit(.videoSizeChanged(size))
+            }
+        case "height":
+            let height = Int(UnsafePointer<Int64>(OpaquePointer(data)).pointee)
+            if let size = videoSizeTracker.setHeight(height) {
+                emit(.videoSizeChanged(size))
+            }
         default:
             break
         }
@@ -205,6 +228,8 @@ public actor MPVKernel: PlayerKernelProtocol {
             duration = seconds
         case .bufferingChanged(let flag):
             isBuffering = flag
+        case .videoSizeChanged(let size):
+            naturalSize = size
         }
     }
 
