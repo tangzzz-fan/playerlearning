@@ -7,24 +7,48 @@ import SwiftUI
 /// （那是 `PlayerViewModel` 的事）—— 这样它天生可预览、可单测。
 public struct PlayerControlBar: View {
     private let isPlaying: Bool
-    private let currentTime: Double
+    private let displayTime: Double
     private let duration: Double
+    private let progress: Double
+    private let canScrub: Bool
     private let onTogglePlay: () -> Void
+    private let onScrubBegan: () -> Void
+    private let onScrubChanged: (Double) -> Void
+    private let onScrubEnded: () -> Void
 
     public init(
         isPlaying: Bool,
-        currentTime: Double,
+        displayTime: Double,
         duration: Double,
-        onTogglePlay: @escaping () -> Void
+        progress: Double,
+        canScrub: Bool,
+        onTogglePlay: @escaping () -> Void,
+        onScrubBegan: @escaping () -> Void,
+        onScrubChanged: @escaping (Double) -> Void,
+        onScrubEnded: @escaping () -> Void
     ) {
         self.isPlaying = isPlaying
-        self.currentTime = currentTime
+        self.displayTime = displayTime
         self.duration = duration
+        self.progress = progress
+        self.canScrub = canScrub
         self.onTogglePlay = onTogglePlay
+        self.onScrubBegan = onScrubBegan
+        self.onScrubChanged = onScrubChanged
+        self.onScrubEnded = onScrubEnded
     }
 
     public var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 6) {
+            PlayerSlider(
+                progress: progress,
+                isEnabled: canScrub,
+                onScrubBegan: onScrubBegan,
+                onScrubChanged: onScrubChanged,
+                onScrubEnded: onScrubEnded
+            )
+            .padding(.horizontal, 12)
+
             HStack(spacing: 16) {
                 Button(action: onTogglePlay) {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
@@ -33,7 +57,7 @@ public struct PlayerControlBar: View {
                 }
                 .accessibilityIdentifier("player.playPause")
 
-                Text(Self.clock(currentTime))
+                Text(Self.clock(displayTime))
                     .monospacedDigit()
                     .accessibilityIdentifier("player.currentTime")
 

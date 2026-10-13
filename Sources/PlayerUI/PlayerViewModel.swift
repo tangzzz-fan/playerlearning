@@ -24,6 +24,9 @@ public final class PlayerViewModel {
     /// （而不是靠截屏猜）。默认 `nil`，**不参与任何播放决策**。
     public var onUpdate: (@MainActor (PlayerControllerUpdate) -> Void)?
 
+    /// 拖拽策略（纯逻辑）。
+    public private(set) var scrub = PlayerScrubModel()
+
     private let controller: PlayerController
     private var pump: Task<Void, Never>?
 
@@ -38,6 +41,22 @@ public final class PlayerViewModel {
         guard duration > 0, currentTime.isFinite else { return 0 }
         return min(max(currentTime / duration, 0), 1)
     }
+
+    /// 界面上该显示的时间：拖拽时显示**预览**，否则显示真实播放位置。
+    /// 两者分开，是为了让"手指底下的数字"不受内核时间流干扰（否则会跟手打架）。
+    public var displayTime: Double {
+        scrub.isScrubbing ? scrub.previewTime : currentTime
+    }
+
+    /// 界面上该显示的进度 `0…1`。拖拽时按预览时间算。
+    public var displayProgress: Double {
+        guard scrub.isScrubbing else { return progress }
+        guard duration > 0 else { return 0 }
+        return min(max(scrub.previewTime / duration, 0), 1)
+    }
+
+    /// 能不能拖：时长未知时不给拖（拖了也不知道拖到哪）。
+    public var canScrub: Bool { duration > 0 }
 
     /// 画面宽高比；尺寸未知时退回 16:9（避免首帧前布局跳一下）。
     public var aspectRatio: Double {
@@ -84,6 +103,30 @@ public final class PlayerViewModel {
     public func pause() async { await controller.pause() }
     public func stop() async { await controller.stop() }
     public func seek(to seconds: Double) async { await controller.seek(to: seconds) }
+
+    /// 按下进度条：**先暂停**。不暂停的话，手指还在拖、声音还在往前走，听起来像坏了。
+    public func beginScrub() async {
+        guard !scrub.isScrubbing else { return }
+        scrub.begin(currentTime: currentTime, isPlaying: isPlaying)
+        if scrub.wasPlayingBeforeScrub {
+            await controller.pause()
+        }
+    }
+
+    /// 拖动中：只更新预览，**不发 seek** —— 拖拽过程中每次移动都 seek 会把内核打爆。
+    public func updateScrub(fraction: Double) {
+        scrub.update(fraction: fraction, duration: duration)
+    }
+
+    /// 松手：**这一次**才发 seek；本来在播就恢复播放。
+    public func endScrub() async {
+        let shouldResume = scrub.wasPlayingBeforeScrub
+        guard let target = scrub.end() else { return }
+        await controller.seek(to: target)
+        if shouldResume {
+            await controller.play()
+        }
+    }
     public func skip(by delta: Double) async { await controller.seek(to: currentTime + delta) }
 
     private func apply(_ update: PlayerControllerUpdate) {

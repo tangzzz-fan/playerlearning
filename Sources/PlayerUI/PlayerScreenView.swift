@@ -20,9 +20,14 @@ public struct PlayerScreenView: View {
             videoArea
             PlayerControlBar(
                 isPlaying: model.isPlaying,
-                currentTime: model.currentTime,
+                displayTime: model.displayTime,
                 duration: model.duration,
-                onTogglePlay: { Task { await model.togglePlayPause() } }
+                progress: model.displayProgress,
+                canScrub: model.canScrub,
+                onTogglePlay: { Task { await model.togglePlayPause() } },
+                onScrubBegan: { Task { await model.beginScrub() } },
+                onScrubChanged: { model.updateScrub(fraction: $0) },
+                onScrubEnded: { Task { await model.endScrub() } }
             )
             statusLine
         }
