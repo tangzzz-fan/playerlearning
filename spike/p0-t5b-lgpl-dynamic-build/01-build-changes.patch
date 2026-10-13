@@ -1,0 +1,75 @@
+diff --git a/Sources/BuildScripts/XCFrameworkBuild/main.swift b/Sources/BuildScripts/XCFrameworkBuild/main.swift
+index eaccafb..4d504ed 100644
+--- a/Sources/BuildScripts/XCFrameworkBuild/main.swift
++++ b/Sources/BuildScripts/XCFrameworkBuild/main.swift
+@@ -376,7 +376,7 @@ private class BuildMPV: BaseBuild {
+         if BaseBuild.options.enableGPL {
+             return [.gmp, .libsmbclient]
+         } else {
+-            return [.gmp]
++            return []
+         }
+     }
+ 
+@@ -384,6 +384,7 @@ private class BuildMPV: BaseBuild {
+     override func arguments(platform: PlatformType, arch: ArchType) -> [String] {
+         var array = [
+             "-Dlibmpv=true",
++            "-Ddefault_library=shared",
+             "-Dgl=enabled",
+             "-Dplain-gl=enabled",
+             "-Diconv=enabled",
+@@ -479,7 +480,7 @@ private class BuildFFMPEG: BaseBuild {
+         if BaseBuild.options.enableGPL {
+             return [.gmp, .nettle, .gnutls, .libsmbclient]
+         } else {
+-            return [.gmp, .nettle, .gnutls]
++            return []
+         }
+     }
+ 
+@@ -500,16 +501,9 @@ private class BuildFFMPEG: BaseBuild {
+     override func ldFlags(platform: PlatformType, arch: ArchType) -> [String] {
+         var ldFlags = super.ldFlags(platform: platform, arch: arch)
+ 
+-        var path = thinDir(library: .nettle, platform: platform, arch: arch)
+-        if FileManager.default.fileExists(atPath: path.path) {
+-            ldFlags.append("-lhogweed")
+-        }
+-        path = thinDir(library: .gnutls, platform: platform, arch: arch)
+-        if FileManager.default.fileExists(atPath: path.path) {
+-            ldFlags.append(contentsOf: ["-framework", "Security", "-framework", "CoreFoundation"])
+-        }
++        ldFlags.append(contentsOf: ["-framework", "Security", "-framework", "CoreFoundation"])
+         if BaseBuild.options.enableGPL {
+-            path = thinDir(library: .libsmbclient, platform: platform, arch: arch)
++            let path = thinDir(library: .libsmbclient, platform: platform, arch: arch)
+             if FileManager.default.fileExists(atPath: path.path) {
+                 ldFlags.append(contentsOf: ["-lresolv", "-lpthread", "-lz", "-liconv"])
+             }
+@@ -617,7 +611,7 @@ private class BuildFFMPEG: BaseBuild {
+         // FFmpeg n9.0 removed --enable-libshaderc/--enable-libglslang (commit 062de19).
+         // Vulkan shaders are now compiled at build time via glslc (spirv_compiler),
+         // so don't pass libshaderc to FFmpeg. libshaderc is still built for libplacebo/mpv.
+-        var dependencyLibrary = [Library.gmp, .gnutls, .libfreetype, .libharfbuzz, .libfribidi, .libass, .vulkan, .lcms2, .libplacebo, .libdav1d, .libuavs3d]
++        var dependencyLibrary = [Library.libfreetype, .libharfbuzz, .libfribidi, .libass, .vulkan, .lcms2, .libplacebo, .libdav1d, .libuavs3d]
+         if BaseBuild.options.enableGPL {
+             dependencyLibrary += [.libsmbclient]
+         }
+@@ -658,7 +652,7 @@ private class BuildFFMPEG: BaseBuild {
+         "--disable-bzlib", "--disable-gray", "--disable-iconv", "--disable-linux-perf",
+         "--disable-shared", "--disable-small", "--disable-symver", "--disable-xlib",
+         "--enable-cross-compile", "--enable-libxml2",
+-        "--enable-optimizations", "--enable-pic", "--enable-runtime-cpudetect", "--enable-static", "--enable-thumb", "--enable-version3",
++        "--enable-optimizations", "--enable-pic", "--enable-runtime-cpudetect", "--enable-static", "--enable-thumb",
+         "--pkg-config-flags=--static",
+         // Documentation options:
+         "--disable-doc", "--disable-htmlpages", "--disable-manpages", "--disable-podpages", "--disable-txtpages",
+@@ -677,6 +671,7 @@ private class BuildFFMPEG: BaseBuild {
+         // ,"--disable-fft"
+         // Hardware accelerators:
+         "--disable-amf", "--disable-d3d11va", "--disable-d3d12va", "--disable-dxva2", "--disable-vaapi", "--disable-vdpau",
++        "--enable-securetransport",
+         // Individual component options:
+         // ,"--disable-everything"
+         // ./configure --list-muxers
