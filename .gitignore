@@ -6,3 +6,17 @@ xcuserdata/
 *.xcuserstate
 *.xcscmblueprint
 Package.resolved
+
+.workbuddy/
+.mutation-backup/
+
+Demo/*.xcodeproj/
+Demo/Info.plist
+Demo/DD/
+
+spike/**/*.xcodeproj/
+spike/**/Info.plist
+spike/**/Resources/
+spike/**/DD/
+spike/**/DD-device/
+spike/**/LocalLibmpv/*.xcframework/

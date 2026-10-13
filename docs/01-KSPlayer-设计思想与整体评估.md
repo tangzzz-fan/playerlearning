@@ -31,7 +31,7 @@
 | 定位 | 基于 AVPlayer + FFmpeg 的纯 Swift 音视频**播放框架**（不是 App） |
 | 平台 | iOS 13+ / macCatalyst 14+ / macOS 10.15+ / tvOS 13+ / visionOS 1+ |
 | 工具链 | `swift-tools-version:6.2`，`swiftLanguageModes: [.v5, .v6]` 双模式并存 |
-| 授权 | 默认 **GPL**；商业用 **LGPL**（付费）；另有更宽松的商业授权（联系作者） |
+| 授权 | 默认 **GPLv3**（`vendor/ksplayer/LICENSE` 即 GPLv3 全文，674 行）；商业用 **LGPL**（付费）；另有更宽松的商业授权（联系作者）。**GPL 的强制来源是 libmpv，不是 FFmpeg** —— 见 §2.4 |
 | 模块 | `KSPlayer`（核心，**二进制**）· `KSPlayerUI`（UI，开源）· `MPVPlayer`（libmpv 内核，开源） |
 | 开源部分规模 | 34 个 `.swift` / 13,671 行（`KSPlayerUI` 29 文件 · `MPVPlayer` 5 文件） |
 | 社区 | 主要作者 `kintan` 542 commits + `kingslay` 245 commits，其余为社区零散贡献 |
@@ -67,9 +67,26 @@
 | 证据 | 含义 |
 | --- | --- |
 | README 里 GPL / LGPL 的**模块对照表** | 授权差异按**模块**切，不按功能切 |
-| README 里「一次性付费特性」12 项 + 「免费特性」10 项 | 功能也分档，且默认不实现：视频超分、进度条预览、预缓存、蓝光 ISO、原生 Dolby Atmos… |
+| README 里「一次性付费特性」**14 项** + 「免费特性」**13 项** | 功能也分档，且默认不实现：视频超分、进度条预览、预缓存、蓝光 ISO、原生 Dolby Atmos… |
 | 导流到 App Store 的 TracyPlayer | 框架是引流入口，App 是变现出口 |
 | `Documents/PrivacyPolicy.md`、`Terms.md`、`privacy.html`、`terms.html` | 上架合规材料提前入仓 |
+
+### 2.4 授权的强制来源：**libmpv，不是 FFmpeg**
+
+这一节是 2026-10-13 的补充修正。**先说结论：把 GPL 带上来的不是 FFmpeg，是 libmpv。** 原文（含本方案早期记录）常把这句写反。
+
+| 环节 | 许可事实 | 依据 |
+| --- | --- | --- |
+| **FFmpeg** | 默认就是 **LGPL-2.1+**。只有开 `--enable-gpl`（或链 `libx264` 这类 GPL 组件）才整体变 GPL | `ffmpeg.org/legal.html` |
+| **mpv / libmpv** | **默认就是 GPLv2+**。必须用 `-Dgpl=false` 构建才降到 LGPLv2.1+，且 mpv 官方明说这个开关「本身不构成 LGPL 授权」 | mpv `README` L190-193 · mpv `Copyright` |
+| **KSPlayer 里的唯一引入点** | `MPVPlayer` 依赖 `.product(name: "libmpv", package: "FFmpegKit")` —— **这一条**就够了 | `vendor/ksplayer/Package.swift` |
+
+**两个反直觉但重要的事实**：
+
+1. **KSPlayer 的两个主力内核不欠 GPL 的债** —— `KSAVPlayer` 走系统 AVPlayer，`KSMEPlayer` 是自研 FFmpeg 管线（FFmpeg 可以做 LGPL）。真正传染的是那个**可选模块** `MPVPlayer`。
+2. **`kingslay/FFmpegKit` 的产物是 GPLv3，且是作者自声明**；它的 LGPL 档「另售，卖点是构建 FFmpeg / MPV 的**脚本**，不是预编译产物」。历史沿革：`.gitmodules` 演进里曾出现 `branch=lgpl`（即当时 LGPL 档是独立分支），但该分支现已 404。
+
+**为什么 KSPlayer 必须选 GPL 兼容许可**：链接 libmpv（GPLv2+）+ GPL 构建的 FFmpeg ⇒ 整体**必须**是 GPL 兼容许可。这解释了「为什么不能是 MIT/Apache」，但不能解释「为什么连 LGPL 档也要收费」—— 后者是商业选择，见思想 7。
 
 ---
 
@@ -186,7 +203,7 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    subgraph GPL["GPL 版（免费）"]
+    subgraph GPL["GPLv3 版（免费）"]
         G1["KSPlayer 内核<br/>仅动态二进制<br/>仅 macOS / iOS 模拟器 / tvOS"]
         G2["KSPlayerUI · MPVPlayer<br/>开源"]
     end
@@ -196,7 +213,14 @@ flowchart LR
     end
 ```
 
-注意 GPL 版**故意不给 iOS 真机 slice** —— 这不是疏漏，是**闸门**：免费用户能开发、能看 demo，但没法把"自带内核的 App"发到真机。
+**这一条要分两层看**（2026-10-13 补充）：
+
+| 层 | 内容 |
+| --- | --- |
+| **法务层（被动）** | 链接 libmpv（GPLv2+）+ GPL 构建的 FFmpeg ⇒ KSPlayer 整体**必须**是 GPL 兼容许可。这解释了「为什么不能是 MIT/Apache」——详见 §2.4 |
+| **商业层（主动）** | 作者是版权人，本来可以选更宽松的许可。他仍然选 GPL，并配了三档阶梯（GPL 免费 / LGPL 付费 / 商业授权另谈） |
+
+注意 GPL 版**故意不给 iOS 真机 slice** —— 这不是疏漏，是**闸门**：免费用户能开发、能看 demo，但没法把"自带内核的 App"发到真机。**而这道闸门正是"商业层"最硬的证据** —— 如果纯属被上游逼的，不需要做这种选择。
 
 > **可迁移的抽象**：开源项目的变现可以**用构建产物的形状来实现**，而不是靠运行时校验或授权码。代价是学习者的体验（你只能学 UI，学不到内核）。
 
@@ -233,7 +257,7 @@ flowchart LR
 | 4 | 自研环形队列 + 队列深度背压 | `CircularBuffer` 的 `put`/`pop(wait,where)`/`search(where)`；支持排序 | 背压用深度信号；提供"不消费遍历" |
 | 5 | 渲染后端按内容特性分派 | `MetalPlayView`：`AVSampleBufferDisplayLayer`(HDR) vs `Metal`(全景) | 输出层抽象下并存两条后端 |
 | 6 | 同步时钟可降级 | 音频时钟优先 → 无音轨回落视频时钟 | 时钟别写死唯一真值 |
-| 7 | 授权按模块切，且闸门用构建产物表达 | GPL 只给二进制、无 iOS 真机 slice | 变现可以用产物形状实现 |
+| 7 | 授权按模块切，且闸门用构建产物表达 | GPLv3 档只给动态二进制、且**故意不给 iOS 真机 slice** | 变现可以用产物形状实现 |
 | 8 | 文档 = 图 + 表 + 踩坑记 | `KSPlayer原理详解.md`、`AVPlayer踩坑记.md` | 看不见的复杂度靠图交付 |
 | 9 | 工程卫生基线干净 | 公开源码 `TODO/FIXME/HACK` = **0**、`fatalError`/`try!` = **0**、`print(` = **1**；有 `.swiftformat`、`.spi.yml` | 13k 行并发代码做到零 TODO 不容易 |
 
