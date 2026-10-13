@@ -128,8 +128,10 @@ playerlearning/
 | `P2-T5` | 属性映射补全 + `pause` 改 observe（取消乐观 emit） | ✅ |
 | `P2-T6` | `END_FILE` 区分错误 → `.failed`（附：`PlaybackEndReason` 策略入 Core；**并反转状态机四条边**，见 `docs/03` 📌） | ✅ |
 | `P2-T7` | `attach` 时序收口（`init` 参数化）+ wakeup 回调改 `passRetained` | ✅ |
-| `P2-T8` | 播放控制 + `seek` 用 `absolute+exact`（钳制归装配层） | ⬅ **下一步** |
+| `P2-T8` | 播放控制 + `seek` 用 `absolute+exact`（钳制归装配层） | ✅（实测抓出两处真缺陷：换文件回不到 `.playing`、播完 `.finished` 是死状态） |
+| `P2-T10` | Demo 接入 `PlayerMPV` 包（端到端硬前置） | ⬅ **下一步** |
 | `P2-T9` | `MPV/` 包纳入门禁（test target + `gate.sh` 条件步骤） | ✅（`gate.sh` 扩为 **6 步**：编译 + **真实 libmpv 行为测试**） |
+| `P2-T10` | Demo 接入 `PlayerMPV` 包（端到端硬前置） | ⬅ **下一步** |
 | `P2-T10` | Demo 接入 `PlayerMPV` 包（端到端硬前置） | 待开始 |
 | `P2-T11` | 端到端 + 性能基线 + `docs/10` + `G2` 固化 | 待开始 |
 

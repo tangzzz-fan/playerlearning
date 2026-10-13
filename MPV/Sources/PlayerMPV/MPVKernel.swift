@@ -125,9 +125,15 @@ public actor MPVKernel: PlayerKernelProtocol {
         emit(.stateChanged(.idle))
     }
 
+    /// 精确 seek（`absolute+exact`）。
+    ///
+    /// 默认的 `absolute` 只 seek 到**最近的关键帧**，落点会往前偏几十到几百毫秒 ——
+    /// 拖进度条时表现为"松手回弹"。`exact` 让 mpv 精确解码到目标帧位置。
+    /// **钳制不在这里做**：目标值的合法区间属于模型知识，由装配层 `PlayerController`
+    /// 经 `PlayerTimeModel.clampSeekTarget` 履行（内核只管执行）。
     public func seek(to seconds: Double) async {
         guard let handle = owner?.pointer else { return }
-        try? send(handle, ["seek", String(seconds), "absolute"])
+        try? send(handle, ["seek", String(seconds), "absolute+exact"])
     }
 
     public func finishEvents() {
@@ -196,6 +202,11 @@ public actor MPVKernel: PlayerKernelProtocol {
         // `width`/`height` 是两个**独立**属性、回调时机不保证成对 ⇒ 交给 VideoSizeTracker 合成。
         _ = mpv_observe_property(handle, 0, "width", MPV_FORMAT_INT64)
         _ = mpv_observe_property(handle, 0, "height", MPV_FORMAT_INT64)
+        // ⚠️ 播到结尾的**唯一可靠信号**：我们开着 `keep-open=yes`，
+        //    此时 mpv 到 EOF 只会把 `pause` 置 yes 并停住末帧，**不发 `MPV_EVENT_END_FILE`**
+        //    （实测：播完 15 秒内一条 `.finished` 都没有）⇒ `.finished` 会变成不可达状态。
+        //    mpv 的文档也点明 `eof-reached` 只在用 `--keep-open` 时才有意义 —— 两者正好配对。
+        _ = mpv_observe_property(handle, 0, "eof-reached", MPV_FORMAT_FLAG)
     }
 
     private nonisolated func installWakeupCallback(_ handle: OpaquePointer, sink: WakeupSink) {
@@ -223,6 +234,7 @@ public actor MPVKernel: PlayerKernelProtocol {
         switch event.event_id {
         case MPV_EVENT_FILE_LOADED:
             emit(.stateChanged(.readyToPlay))
+            emitPauseState()
         case MPV_EVENT_END_FILE:
             guard let data = event.data else { return }
             emitEndFile(UnsafePointer<mpv_event_end_file>(OpaquePointer(data)).pointee)
@@ -232,6 +244,19 @@ public actor MPVKernel: PlayerKernelProtocol {
         default:
             break
         }
+    }
+
+    /// `FILE_LOADED` 之后**主动读一次** `pause`，而不是等它的"变化"通知。
+    ///
+    /// 为什么必须主动读（实测踩到）：换文件时 `pause` 的值**没有变化**（前后都是 `no`），
+    /// mpv 于是**不发** `MPV_EVENT_PROPERTY_CHANGE` ⇒ 新文件明明在放，
+    /// 状态却永久停在 `.readyToPlay`（事件流里 `currentTimeChanged` 一路推进，状态不动）。
+    /// 只依赖"变化"通知，等于把"当前值"这件事交给了一个只报告差异的信号。
+    private func emitPauseState() {
+        guard let handle = owner?.pointer else { return }
+        var flag: Int32 = 0
+        guard mpv_get_property(handle, "pause", MPV_FORMAT_FLAG, &flag) >= 0 else { return }
+        emit(.stateChanged(flag != 0 ? .paused : .playing))
     }
 
     /// **必须按 `reason` 分派。** 无条件报 `.finished` 会让坏文件永远进不了 `.failed` ——
@@ -255,6 +280,11 @@ public actor MPVKernel: PlayerKernelProtocol {
             emit(.bufferingChanged(UnsafePointer<Int32>(OpaquePointer(data)).pointee != 0))
         case "pause":
             emit(.stateChanged(UnsafePointer<Int32>(OpaquePointer(data)).pointee != 0 ? .paused : .playing))
+        case "eof-reached":
+            // 只在**变真**时上报：回复到 false（用户 seek 回去继续看）由 `pause` 那条边负责表达，
+            // 这里不再多报一个状态，避免"退回去继续播"变成两次状态翻转。
+            guard UnsafePointer<Int32>(OpaquePointer(data)).pointee != 0 else { return }
+            emit(.stateChanged(.finished))
         case "width":
             let width = Int(UnsafePointer<Int64>(OpaquePointer(data)).pointee)
             if let size = videoSizeTracker.setWidth(width) {
