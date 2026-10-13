@@ -5,8 +5,13 @@ import Foundation
 
 /// 现场生成一个确定性样例片段，写进 App 沙盒。
 ///
-/// 为什么不随包带一个样片：二进制不入仓库（`.gitignore` 的立场与 `vendor/ksplayer`
-/// 剔除 99 MB 闭源 xcframework 一致），也不在运行时下载（本机出网要过 MITM 代理）。
+/// ⚠️ **2026-10-14 起它的角色变成「离线兜底」**：正常路径是 `SampleClipProvider`
+/// 下载真实视频（MDN `flower.mp4`，CC0），只有下载不到时才落到这里。
+/// 保留它的理由很具体：**端到端门禁不能依赖网络** —— 断网时若没有兜底，
+/// `G2` 会因为"素材拿不到"而失败，而那是环境问题、不是代码问题，会被误读成回归。
+///
+/// 它仍然生成**真的 AAC 音轨**，所以离线时「出声」这一项依然有证据。
+/// 二进制不入仓库的立场不变（与 `vendor/ksplayer` 剔除 99 MB 闭源 xcframework 一致）。
 enum SampleClipWriter {
     static let width = 640
     static let height = 360

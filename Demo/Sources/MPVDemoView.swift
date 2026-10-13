@@ -56,15 +56,27 @@ final class PlayerDemoModel {
         await player.teardown()
     }
 
+    /// `-sampleURL <url>` 可覆盖样例来源（排查用；也给"换一个真实素材复验"留了口子）。
+    private let sampleURLOverride: String? = {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-sampleURL"), index + 1 < arguments.count else { return nil }
+        return arguments[index + 1]
+    }()
+
     func loadSample() async {
-        do {
-            note = "正在生成样例片段…"
-            let url = try await SampleClipWriter.ensureClip()
-            note = "已载入 \(url.lastPathComponent)"
-            await player.load(PlayerResource(url: url))
-        } catch {
-            note = "生成样例失败：\(error)"
+        note = "正在准备样例视频…"
+        guard let clip = await SampleClipProvider.ensureClip(overrideURL: sampleURLOverride) else {
+            note = "样例视频不可用（下载与本地生成都失败）"
+            Self.writeToStderr("[sample] source=none")
+            return
         }
+        let bytes = (try? clip.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        note = "已载入 \(clip.url.lastPathComponent)（\(clip.source.rawValue)）"
+        // 来源必须**上 trace**：G2 要判断"这份素材到底是什么"。
+        // 若这里静默退回"本地生成"，断言仍会绿，而"用真实视频验证"这件事其实没发生 ——
+        // 那正是 `P-034` 的形态（没被执行的事返回绿）。所以让门禁看得见它。
+        Self.writeToStderr("[sample] source=\(clip.source.rawValue) bytes=\(bytes) path=\(clip.url.path)")
+        await player.load(PlayerResource(url: clip.url))
     }
 
     private func startMemorySampling() {
