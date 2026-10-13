@@ -374,6 +374,100 @@ MUTATIONS = [
      "        if let previous = fileAccess.begin(resource.url) {\n            previous.stopAccessingSecurityScopedResource()\n        }",
      "",
      "viewModel: 换文件时不申请访问权（外部文件读不到）"),
+
+    # ── Phase 4 · 字幕解析内核（PlayerCore）───────────────────────────────
+    ("Sources/PlayerCore/SubtitleCue.swift",
+     "        time >= start && time < end",
+     "        time >= start && time <= end",
+     "cue: 右端点由开变闭（接缝上会同时命中两条）"),
+    ("Sources/PlayerCore/SubtitleTimeline.swift",
+     "        return (clamped * 1000).rounded() / 1000",
+     "        return clamped",
+     "timeline: 延迟不再对齐毫秒（±0.1 累加出浮点噪声）"),
+    ("Sources/PlayerCore/SubtitleTimeline.swift",
+     "        let clamped = Swift.min(Swift.max(seconds, delayRange.lowerBound), delayRange.upperBound)",
+     "        let clamped = Swift.max(seconds, delayRange.lowerBound)",
+     "timeline: 延迟上限不再钳制"),
+    ("Sources/PlayerCore/SubtitleTimeline.swift",
+     "            if cues[mid].start <= shifted {",
+     "            if cues[mid].start < shifted {",
+     "timeline: 二分边界 <= 收紧为 <（起始时刻查不到）"),
+    ("Sources/PlayerCore/SubtitleTimeline.swift",
+     "        return found.reversed()",
+     "        return found",
+     "timeline: 生效字幕不再按开始时间正序（重叠时顺序颠倒）"),
+    ("Sources/PlayerCore/SubtitleTextDecoder.swift",
+     "        guard total >= 2 else { return nil }",
+     "        guard total >= 0 else { return nil }",
+     "decoder: 一个偶发 NUL 就判成 UTF-16（整篇解错）"),
+    ("Sources/PlayerCore/SubtitleTextDecoder.swift",
+     "        if oddNuls * 4 >= total * 3 { return .utf16LittleEndian }",
+     "        if oddNuls * 4 >= total * 3 { return .utf16BigEndian }",
+     "decoder: 无 BOM 的 UTF-16LE 被认成 BE（字节对调）"),
+    # ⚠️ 刻意**不**给 UTF-8 那条 BOM 加变异体：实测 Foundation 解 UTF-8 时自己会吞 BOM，
+    #    所以"手工不剥"在语义上等价 ⇒ 那条变异体永远杀不死，只会变成噪音
+    #    （等价变异体：不是测试盲区，见 docs/PITFALLS「等价变异体」）。
+    #    真正必须手工剥的是下面这两条 —— 显式端序解码器**不吞** BOM。
+    ("Sources/PlayerCore/SubtitleTextDecoder.swift",
+     "            guard let text = decode(Data(data.dropFirst(2)), as: .utf16LittleEndian) else { return nil }",
+     "            guard let text = decode(data, as: .utf16LittleEndian) else { return nil }",
+     "decoder: UTF-16LE 的 BOM 不剥（首码位残留 U+FEFF）"),
+    ("Sources/PlayerCore/SubtitleTextDecoder.swift",
+     "            guard let text = decode(Data(data.dropFirst(2)), as: .utf16BigEndian) else { return nil }",
+     "            guard let text = decode(data, as: .utf16BigEndian) else { return nil }",
+     "decoder: UTF-16BE 的 BOM 不剥（首码位残留 U+FEFF）"),
+    ("Sources/PlayerCore/SRTParser.swift",
+     '        let groups = raw.replacingOccurrences(of: ",", with: ".")',
+     '        let groups = raw.replacingOccurrences(of: ",", with: ":")',
+     "srt: 毫秒分隔符被换成冒号（时间码解析全废）"),
+    ("Sources/PlayerCore/SRTParser.swift",
+     "            guard let range = timeRange(lines[timecodeLine]), range.end >= range.start else {",
+     "            guard let range = timeRange(lines[timecodeLine]), range.end > range.start else {",
+     "srt: 零长度 cue 被判为坏块丢弃"),
+    ("Sources/PlayerCore/SRTParser.swift",
+     '            guard let timecodeLine = lines.firstIndex(where: { $0.contains("-->") }) else {',
+     "            guard let timecodeLine = lines.firstIndex(where: { timeRange($0) != nil }) else {",
+     "srt: 坏块被归入噪声 ⇒ skippedBlocks 永远是 0"),
+    ("Sources/PlayerCore/SRTParser.swift",
+     '        let padded = digits.prefix(3).padding(toLength: 3, withPad: "0", startingAt: 0)',
+     '        let padded = digits.prefix(3).padding(toLength: 2, withPad: "0", startingAt: 0)',
+     "srt: 两位毫秒按 2 位补零（00:00:02,25 变成 2.025 秒）"),
+    ("Sources/PlayerCore/ASSParser.swift",
+     "            if character == \",\", fields.count < count - 1 {",
+     "            if character == \",\", fields.count < count {",
+     "ass: 末字段不再吞下多余逗号（台词被切碎）"),
+    ("Sources/PlayerCore/ASSParser.swift",
+     "            milliseconds += value * 10",
+     "            milliseconds += value",
+     "ass: 厘秒当毫秒算（整条字幕快 10 倍）"),
+    ("Sources/PlayerCore/ASSParser.swift",
+     "        return value != 0",
+     "        return value >= 0",
+     "ass: Bold/Italic 的 0 被当成真"),
+    ("Sources/PlayerCore/ASSParser.swift",
+     "            if depth == 0 { stripped.append(character) }",
+     "            stripped.append(character)",
+     "ass: 覆盖标签 {\\pos…} 不再剥离（标签文本混进字幕）"),
+    ("Sources/PlayerCore/ASSParser.swift",
+     '            .replacingOccurrences(of: "\\\\N", with: "\\n")',
+     '            .replacingOccurrences(of: "\\\\N", with: " ")',
+     "ass: 硬换行 \\\\N 被换成空格（双语字幕糊成一行）"),
+    ("Sources/PlayerCore/ASSParser.swift",
+     '                } else if key == "dialogue" {',
+     '                } else if key == "dialogue" || key == "comment" {',
+     "ass: Comment 行被当成字幕显示"),
+    ("Sources/PlayerCore/SubtitleDocument.swift",
+     '        case "srt": return .srt',
+     '        case "srt": return .ass',
+     "document: .srt 扩展名被判成 ASS"),
+    ("Sources/PlayerCore/SubtitleDocument.swift",
+     '        if lowered.contains("v4+ styles") { return .ass }',
+     '        if lowered.contains("v4+ styles") { return .ssa }',
+     "document: V4+ 被判成老 SSA"),
+    ("Sources/PlayerCore/SubtitleDocument.swift",
+     '        if lowered.contains("[script info]") { return .ass }',
+     '        if lowered.contains("[script info]") { return .srt }',
+     "document: 有 [Script Info] 却没有 Styles 的内容被判成 SRT"),
 ]
 
 
@@ -395,9 +489,9 @@ def guard(_signum, _frame) -> None:
     sys.exit(130)
 
 
-def snapshot() -> None:
+def snapshot(items: list[tuple[str, str, str, str]] | None = None) -> None:
     BACKUP.mkdir(exist_ok=True)
-    for relative in {relative for relative, *_ in MUTATIONS}:
+    for relative in {relative for relative, *_ in (items if items is not None else MUTATIONS)}:
         target = BACKUP / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, target)
@@ -429,11 +523,36 @@ def run_suite() -> str:
     return "red"
 
 
+def parse_only(argv: list[str]) -> list[str]:
+    """`--only Sources/PlayerCore/Subtitle` —— 只跑命中这些**路径前缀**的变异体。
+
+    为什么需要它：全量 112 个变异体要跑上百次套件（≈3 分钟），那是**阶段末**该做的事。
+    节点内改的只是某几个文件，就该只验证那几个文件。
+    ⚠️ 但"少跑了"绝不允许看起来像"全绿"（`P-023` / `P-034` 同族）——
+    被过滤掉的数量与后果都会**显式打印**出来。
+    """
+    prefixes: list[str] = []
+    index = 0
+    while index < len(argv):
+        if argv[index] == "--only":
+            index += 1
+            while index < len(argv) and not argv[index].startswith("--"):
+                prefixes.extend(part for part in argv[index].split(",") if part)
+                index += 1
+            continue
+        index += 1
+    return prefixes
+
+
 def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] == "--restore":
         restore()
         print("已从备份还原")
         return 0
+
+    only = parse_only(sys.argv[1:])
+    selected = [m for m in MUTATIONS if not only or any(m[0].startswith(prefix) for prefix in only)]
+    skipped = len(MUTATIONS) - len(selected)
 
     if BACKUP.is_dir():
         print("发现上次运行残留的备份，先还原", flush=True)
@@ -442,7 +561,7 @@ def main() -> int:
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, guard)
 
-    snapshot()
+    snapshot(selected)
     try:
         if run_suite() != "green":
             print("基线异常：变异前套件就不是绿的，终止", flush=True)
@@ -452,7 +571,7 @@ def main() -> int:
         survived: list[str] = []
         timed_out: list[str] = []
 
-        for relative, old, new, label in MUTATIONS:
+        for relative, old, new, label in selected:
             path = ROOT / relative
             text = path.read_text()
             if text.count(old) != 1:
@@ -475,10 +594,21 @@ def main() -> int:
         restore()
 
     print(flush=True)
-    print(
-        f"变异体 {len(MUTATIONS)} · 杀死 {len(killed)} · 存活 {len(survived)} · 超时 {len(timed_out)}",
-        flush=True,
-    )
+    if skipped:
+        print(
+            f"变异体 {len(MUTATIONS)} · 本次只跑 {len(selected)} 个（--only 过滤掉 {skipped} 个）· "
+            f"杀死 {len(killed)} · 存活 {len(survived)} · 超时 {len(timed_out)}",
+            flush=True,
+        )
+        print(
+            f"⚠️ 被过滤的 {skipped} 个变异体**本次没有被验证** —— 阶段末请不带 --only 跑一次全量",
+            flush=True,
+        )
+    else:
+        print(
+            f"变异体 {len(MUTATIONS)} · 杀死 {len(killed)} · 存活 {len(survived)} · 超时 {len(timed_out)}",
+            flush=True,
+        )
     if survived:
         print("存活清单：", flush=True)
         for label in survived:

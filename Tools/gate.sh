@@ -44,8 +44,36 @@ else
   printf '（受限 shell：SwiftPM / xcodebuild 将附加逃逸参数）\n'
 fi
 
+# ── 运行模式 ───────────────────────────────────────────────────────────
+# 全量 8 步里，[4]~[7] 三步要拉起 libmpv 产物与 iOS 模拟器，合计 ≈4 分钟。
+# 节点内改的往往是 PlayerCore 的纯逻辑，跟那三步**无关** —— 每次全跑是纯浪费。
+#   ./Tools/gate.sh                      全量（阶段末 / 推送前）
+#   ./Tools/gate.sh core                 逻辑门：[1]~[3] + [8]，不碰模拟器
+#   ./Tools/gate.sh core --only <前缀>    再只变异这些文件（节点内最快，≈40 秒）
+MODE=full
+ONLY_ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    core) MODE=core ;;
+    --only)
+      # 允许一次给多个前缀（节点内常要覆盖新加的若干文件）。
+      shift
+      [ $# -gt 0 ] || { printf '--only 缺少参数\n' >&2; exit 2; }
+      ONLY_ARGS=(--only)
+      while [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; do
+        ONLY_ARGS+=("$1")
+        shift
+      done
+      continue
+      ;;
+    *) printf '未知参数：%s\n' "$1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
 printf '═══ 判定门（G1 + Phase 2 增量）═══\n'
-printf '依据 docs/03 §三 · docs/09 §四 D-a\n\n'
+printf '依据 docs/03 §三 · docs/09 §四 D-a\n'
+printf '模式：%s%s\n\n' "$MODE" "${ONLY_ARGS[*]:+（--only ${ONLY_ARGS[*]:1}）}"
 
 printf '[1/8] PlayerCore 零 UI 框架 import\n'
 if grep -rE 'import (SwiftUI|UIKit|AppKit)' Sources/PlayerCore/; then
@@ -93,6 +121,20 @@ if [ "${failedRuns:-0}" -ne 0 ]; then
 fi
 pass '测试全绿'
 
+if [ "$MODE" = core ]; then
+  printf '\n[4/8]~[7/8] SKIP —— core 模式（节点内）\n'
+  printf '  这一步省下的是：MPV 包编译 · MPV 内核行为测试 · G2 接线 · G3 手指层面（≈4 分钟，需模拟器）\n'
+  printf '  ⚠️ 本次**未验证**上述四项。阶段末请跑不带 core 的全量门禁。\n'
+  # ⚠️ 只在"跳过的东西恰好被本次改动覆盖"时才警告 —— 否则警告会变成噪音，最终被无视。
+  touched="$(git diff --name-only HEAD -- MPV Demo Sources/PlayerUI 2>/dev/null || true)"
+  if [ -n "$touched" ]; then
+    printf '  ⚠️⚠️ 但本次改动**正好碰到**被跳过的那一层：\n'
+    while IFS= read -r path; do printf '       %s\n' "$path"; done <<< "$touched"
+    printf '  ⇒ 这次 core 模式**不足够**，请跑全量门禁再提交。\n'
+  else
+    printf '  （本次改动都在 Sources/PlayerCore，与那三项无关 ⇒ 跳过是安全的）\n'
+  fi
+else
 printf '\n[4/8] MPV 包构建（libmpv 适配器）\n'
 # ⚠️ 为什么必须有这一步：`MPV/` 是**独立包**，根包的 build/test 完全看不到它。
 # `P2-T4` 给 PlayerKernelEvent 加了 `.videoSizeChanged`，把 `MPVKernel` 的 switch 打破成非穷尽 ——
@@ -252,9 +294,10 @@ else
   fi
   pass 'G3 UI 交互通过（能播 · 能暂停 · 能拖进度 · 能全屏 · 选择器可拉起）'
 fi
+fi
 
 printf '\n[8/8] 变异测试\n'
-if ! python3 Tools/mutation_check.py; then
+if ! python3 Tools/mutation_check.py "${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"}"; then
   fail '存在存活或超时的变异体'
 fi
 pass '变异体全部被杀死'

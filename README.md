@@ -41,10 +41,15 @@ Demo/                    ← app shell（project.yml → xcodegen 生成，产�
 ```
 
 ```bash
-./Tools/gate.sh                        # 判定门（7 步）：零 UI import + 根包 build/test + MPV 包编译 + MPV 行为测试 + **G2 端到端真跑** + 变异
-                                        #   第 4 步在 MPV 产物未 stage 时会 SKIP 并**显式声明未覆盖 MPVKernel 编译**（见 P-034）
-swift build && swift test              # 只跑根包（⚠️ 受限 shell 需加 --disable-sandbox，gate.sh 会自动判断）
-python3 Tools/mutation_check.py        # 只跑变异闸门（--restore 可还原被就地改动的源文件）
+# 判定门分两档（全量约 7 分钟，其中 4 分钟花在 3 次模拟器启动上）
+./Tools/gate.sh                         # 全量 8 步：阶段末 / 推送前跑（含 MPV 编译 · 内核行为 · G2 接线 · G3 手指层面）
+./Tools/gate.sh core                    # 逻辑门：零 UI import + build + test + 变异（不碰模拟器，≈3 分钟）
+./Tools/gate.sh core --only Sources/PlayerCore/Subtitle Sources/PlayerCore/SRTParser
+                                        # ↑ 节点内最快：只变异本次改到的文件（≈40 秒）
+                                        #   ⚠️ 被过滤掉的变异体会**显式打印「本次未被验证」**（P-023 / P-034 同族）
+                                        #   ⚠️ 若改动碰到 MPV/ · Demo/ · PlayerUI/，core 模式会**警告「不足够，请跑全量」**
+swift build && swift test               # 只跑根包（⚠️ 受限 shell 需加 --disable-sandbox，gate.sh 会自动判断）
+python3 Tools/mutation_check.py         # 只跑变异闸门（--restore 还原被就地改动的源文件；--only 限定文件）
 cd Demo && xcodegen generate           # 生成 app 工程（.xcodeproj 不入 git）
 xcodebuild -project Demo/PlayerStackDemo.xcodeproj -scheme PlayerStackDemo \
   -destination 'generic/platform=iOS Simulator' build
