@@ -24,14 +24,22 @@ public struct PlayerScreenView: View {
                 duration: model.duration,
                 progress: model.displayProgress,
                 canScrub: model.canScrub,
+                isFullscreen: model.fullscreen.hidesHostChrome,
+                subtitleLabel: model.subtitles.label,
                 onTogglePlay: { Task { await model.togglePlayPause() } },
                 onScrubBegan: { Task { await model.beginScrub() } },
                 onScrubChanged: { model.updateScrub(fraction: $0) },
-                onScrubEnded: { Task { await model.endScrub() } }
+                onScrubEnded: { Task { await model.endScrub() } },
+                onToggleFullscreen: { model.toggleFullscreen() },
+                onToggleSubtitles: { model.toggleSubtitles() }
             )
-            statusLine
+            if !model.fullscreen.hidesHostChrome {
+                statusLine
+            }
         }
         .background(.black)
+        // 全屏时连安全区一起接管（否则刘海两侧会留黑边，看起来"没全"）。
+        .ignoresSafeArea(edges: model.fullscreen.hidesHostChrome ? .all : [])
         .task { await model.start() }
         .onDisappear { Task { await model.teardown() } }
     }
@@ -65,7 +73,7 @@ public struct PlayerScreenView: View {
         let size = model.naturalSize
         let video = size.width > 0 ? "\(Int(size.width))×\(Int(size.height))" : "—"
         let audio = model.audio.isOutputting ? "输出 \(model.audio.outputSampleRate) Hz" : "无输出"
-        return "\(model.state) · 画面 \(video) · 音频 \(audio)"
+        return "\(model.state) · 画面 \(video) · 音频 \(audio) · \(model.subtitles.label)"
             + (model.isBuffering ? " · 缓冲中" : "")
     }
 }

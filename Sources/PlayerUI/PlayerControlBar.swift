@@ -11,10 +11,14 @@ public struct PlayerControlBar: View {
     private let duration: Double
     private let progress: Double
     private let canScrub: Bool
+    private let isFullscreen: Bool
+    private let subtitleLabel: String
     private let onTogglePlay: () -> Void
     private let onScrubBegan: () -> Void
     private let onScrubChanged: (Double) -> Void
     private let onScrubEnded: () -> Void
+    private let onToggleFullscreen: () -> Void
+    private let onToggleSubtitles: () -> Void
 
     public init(
         isPlaying: Bool,
@@ -22,20 +26,28 @@ public struct PlayerControlBar: View {
         duration: Double,
         progress: Double,
         canScrub: Bool,
+        isFullscreen: Bool,
+        subtitleLabel: String,
         onTogglePlay: @escaping () -> Void,
         onScrubBegan: @escaping () -> Void,
         onScrubChanged: @escaping (Double) -> Void,
-        onScrubEnded: @escaping () -> Void
+        onScrubEnded: @escaping () -> Void,
+        onToggleFullscreen: @escaping () -> Void,
+        onToggleSubtitles: @escaping () -> Void
     ) {
         self.isPlaying = isPlaying
         self.displayTime = displayTime
         self.duration = duration
         self.progress = progress
         self.canScrub = canScrub
+        self.isFullscreen = isFullscreen
+        self.subtitleLabel = subtitleLabel
         self.onTogglePlay = onTogglePlay
         self.onScrubBegan = onScrubBegan
         self.onScrubChanged = onScrubChanged
         self.onScrubEnded = onScrubEnded
+        self.onToggleFullscreen = onToggleFullscreen
+        self.onToggleSubtitles = onToggleSubtitles
     }
 
     public var body: some View {
@@ -67,6 +79,18 @@ public struct PlayerControlBar: View {
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("player.duration")
+
+                Button(action: onToggleSubtitles) {
+                    Image(systemName: "captions.bubble")
+                    // 按钮的**可读标签**要如实区分"开着但没源"，不能只画一个图标糊过去。
+                    .accessibilityLabel(subtitleLabel)
+                }
+                .accessibilityIdentifier("player.subtitles")
+
+                Button(action: onToggleFullscreen) {
+                    Image(systemName: isFullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                }
+                .accessibilityIdentifier("player.fullscreen")
             }
             .padding(.horizontal, 16)
         }

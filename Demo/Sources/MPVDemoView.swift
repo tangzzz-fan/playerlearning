@@ -96,6 +96,9 @@ struct MPVDemoView: View {
         VStack(spacing: 0) {
             PlayerScreenView(model: demo.player, surface: demo.surface)
 
+            // 全屏时收起调试按钮（宿主外壳要让位）—— 这是"全屏"该有的样子，
+            // 也是 UI 测试判断"真的进了全屏"的可观察证据。
+            if !demo.player.fullscreen.hidesHostChrome {
             HStack(spacing: 12) {
                 Button("载入样例") { Task { await demo.loadSample() } }
                     .accessibilityIdentifier("demo.loadSample")
@@ -112,6 +115,7 @@ struct MPVDemoView: View {
             }
             .buttonStyle(.bordered)
             .padding(12)
+            }
         }
         .task { await demo.start() }
         .onDisappear { Task { await demo.teardown() } }

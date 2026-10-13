@@ -26,6 +26,10 @@ public final class PlayerViewModel {
 
     /// 拖拽策略（纯逻辑）。
     public private(set) var scrub = PlayerScrubModel()
+    /// 全屏状态（纯逻辑）。
+    public private(set) var fullscreen = PlayerFullscreenModel()
+    /// 字幕开关（`P3-T3` 占位，`P4` 接真字幕）。
+    public private(set) var subtitles = PlayerSubtitleToggle()
 
     private let controller: PlayerController
     private var pump: Task<Void, Never>?
@@ -79,7 +83,17 @@ public final class PlayerViewModel {
 
     public func teardown() async {
         endUpdates()
+        // 退出播放器必须复位全屏：否则下次进来一开屏就是全屏，用户会以为界面坏了。
+        fullscreen.reset()
         await controller.finishUpdates()
+    }
+
+    public func toggleFullscreen() {
+        fullscreen.toggle()
+    }
+
+    public func toggleSubtitles() {
+        subtitles.toggle()
     }
 
     public func load(_ resource: PlayerResource) async {
