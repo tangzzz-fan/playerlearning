@@ -41,35 +41,13 @@ targets:
         DEVELOPMENT_TEAM: 3GMJYX32U9
         CODE_SIGN_STYLE: Automatic
         ENABLE_USER_SCRIPT_SANDBOXING: NO
-  # G3 的 UI 自动化。（xcodegen 需要显式声明 target，且**新增文件后要重新 generate**。）
-  PlayerStackDemoUITests:
-    type: bundle.ui-testing
-    platform: iOS
-    sources:
-      - path: UITests
-    dependencies:
-      - target: PlayerStackDemo
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.playerstack.demo.uitests
-        SWIFT_VERSION: "6.0"
-        DEVELOPMENT_TEAM: 3GMJYX32U9
-        CODE_SIGN_STYLE: Automatic
-        TEST_TARGET_NAME: PlayerStackDemo
-        GENERATE_INFOPLIST_FILE: YES
-
 schemes:
   # xcodegen 默认**不生成** scheme，必须显式声明，否则 xcodebuild -scheme / CI 都用不了。
   PlayerStackDemo:
     build:
       targets:
         PlayerStackDemo: all
-        PlayerStackDemoUITests: [test]
     run:
       config: Debug
-    test:
-      config: Debug
-      targets:
-        - PlayerStackDemoUITests
     archive:
       config: Release

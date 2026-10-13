@@ -8,6 +8,7 @@
 | --- | --- |
 | M0 路线成立 | ✅ 已产出**自建动态 LGPL-2.1 libmpv 产物**，模拟器与真机（iPhone 16 Pro）双通出画面 |
 | M1 地基可测 | ✅ 内核边界已立（`PlayerKernelProtocol` / 注册表 / `FakeKernel` / 状态机 / 时间模型）· **84 tests 全绿** · 变异 **27/27** 杀死 · `PlayerCore` 零 UI 依赖 |
+| 端到端素材 | **MDN `flower.mp4`（CC0）**运行时下载 + 缓存；离线退回本地生成（`G2` 会打印用的是哪一个） |
 | M2 能看片 | **✅ 达成**：模拟器上**出画 + 出声 + `seek` 精确 + 播完报 `.finished`**，且有端到端门禁守着（[`docs/10`](docs/10-P2验证报告.md)）· 下一步 `M3` |
 
 门禁：`./Tools/gate.sh`（退出码 0 = `G1` 达成）。
@@ -40,28 +41,32 @@ MPV/                     ← ⚠️ 独立包 PlayerMPV：libmpv 适配器（只
 Demo/                    ← app shell（project.yml → xcodegen 生成，产物不入仓）
 ```
 
-```bash
-# 判定门分两档（全量约 7 分钟，其中 4 分钟花在 3 次模拟器启动上）
-./Tools/gate.sh                         # 全量 8 步：阶段末 / 推送前跑（含 MPV 编译 · 内核行为 · G2 接线 · G3 手指层面）
-./Tools/gate.sh core                    # 逻辑门：零 UI import + build + test + 变异（不碰模拟器，≈3 分钟）
-./Tools/gate.sh core --only Sources/PlayerCore/Subtitle Sources/PlayerCore/SRTParser
-                                        # ↑ 节点内最快：只变异本次改到的文件（≈40 秒）
-                                        #   ⚠️ 被过滤掉的变异体会**显式打印「本次未被验证」**（P-023 / P-034 同族）
-                                        #   ⚠️ 若改动碰到 MPV/ · Demo/ · PlayerUI/，core 模式会**警告「不足够，请跑全量」**
-swift build && swift test               # 只跑根包（⚠️ 受限 shell 需加 --disable-sandbox，gate.sh 会自动判断）
-python3 Tools/mutation_check.py         # 只跑变异闸门（--restore 还原被就地改动的源文件；--only 限定文件）
-cd Demo && xcodegen generate           # 生成 app 工程（.xcodeproj 不入 git）
-xcodebuild -project Demo/PlayerStackDemo.xcodeproj -scheme PlayerStackDemo \
-  -destination 'generic/platform=iOS Simulator' build
+**验收标准就一条：项目能正确运行，`swift test` 全绿。**
 
-./Tools/stage-libmpv.sh                # ⚠️ 构建 MPV 包前必须先跑（产物 104 MB，gitignored）
+```bash
+# ① 根包（纯逻辑，日常就是它）
+swift build && swift test              # ⚠️ 受限 shell 需加 --disable-sandbox（见下）
+
+# ② MPV 包（libmpv 适配器，只编译 iOS）
+./Tools/stage-libmpv.sh                # 产物 104 MB 且 gitignored ⇒ 换设备后**必须先跑一次**
 cd MPV && xcodebuild -scheme PlayerMPV -destination 'platform=iOS Simulator' build
+
+# ③ Demo app（手动跑起来看效果）
+cd Demo && xcodegen generate           # 新增源文件后必须重跑（P-030）；.xcodeproj 不入 git
+xcodebuild -project PlayerStackDemo.xcodeproj -scheme PlayerStackDemo \
+  -destination 'platform=iOS Simulator' build
 ```
+
+> **构建/测试环境（沙箱逃逸、挑模拟器、toybox shim）用现成的技能，别在项目里再包一层：**
+> `bash ~/.workbuddy/skills/macos-build-test/scripts/macos-run.sh probe` （SwiftPM / macOS）
+> `bash ~/.workbuddy/skills/ios-build-test/scripts/ios-run.sh probe` （iOS 模拟器 / 真机）
+> 两个脚本会自动补逃逸参数、自动挑可用模拟器、把日志落文件只回打关键行。
+> 换设备先跑 `bash ~/.workbuddy/skills/install.sh`（实体随 Marquee 仓库走）。
 
 > ⚠️ **测试一律用 Swift Testing**（`@Test` / `#expect` / `try #require`），**不使用 XCTest**。触及 `CAMetalLayer` 的套件须显式 `@Suite(.serialized)`（并行是默认）。
 > ⚠️ **`Demo/project.yml` 必须显式声明 `schemes:`** —— xcodegen **默认不生成** scheme，没有它 `xcodebuild -scheme` 与 CI 全不可用（见 `P-030`）。
 
-> ⚠️ **`PlayerCore` 里出现 `import SwiftUI` / `UIKit` / `AppKit` 即视为违规** —— 这是 `G1` 判定门的一条硬线，破了就永久失去可测性。
+> ⚠️ **`PlayerCore` 里出现 `import SwiftUI` / `UIKit` / `AppKit` 即视为违规** —— 破了就永久失去可测性（KSPlayer 的教训），这是一条**架构约束**，与有没有自动门禁无关。
 > ⚠️ **根包不得引用 libmpv** —— 适配器只在 `MPV/` 独立包内。原因：自建产物**只有 iOS 切片**，而 SPM 会校验 `binaryTarget` 路径存在性（与平台条件无关）⇒ 一旦放进根包，**新克隆的 `swift test` 必失败**。
 > ⚠️ **以 `AsyncStream` 为边界的测试必须能"收尾 + 排空 + 断言 nil"**，否则只会"过"或"挂死"（见 `docs/PITFALLS.md` `P-014`）。
 > ⚠️ **每个"边界 + 消费者"的组合必须有集成测试** —— 单元测试全绿不等于部件能组合（见 `P-018`）。

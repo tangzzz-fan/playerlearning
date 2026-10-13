@@ -8,13 +8,11 @@ xcuserdata/
 Package.resolved
 
 .workbuddy/
-.mutation-backup/
 __pycache__/
 
 Demo/*.xcodeproj/
 Demo/Info.plist
 Demo/DD/
-Demo/UITests.xctestplan
 
 MPV/Library/*.xcframework/
 MPV/.build/
