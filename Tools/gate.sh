@@ -11,21 +11,23 @@ fail() { printf '  ✗ %s\n' "$1"; exit 1; }
 # 报 sandbox_apply: Operation not permitted。按需补逃逸参数（只加在命令行，绝不写进工程文件）。
 if sandbox-exec -p '(version 1)(deny default)(allow file-read*)' /bin/echo ok >/dev/null 2>&1; then
   SWIFT_ESCAPE=()
+  XCB_ESCAPE=()
 else
   SWIFT_ESCAPE=(--disable-sandbox)
-  printf '（受限 shell：SwiftPM 构建将附加 --disable-sandbox）\n'
+  XCB_ESCAPE=(OTHER_SWIFT_FLAGS=-disable-sandbox)
+  printf '（受限 shell：SwiftPM / xcodebuild 将附加逃逸参数）\n'
 fi
 
-printf '═══ G1 判定门 ═══\n'
-printf '依据 docs/03 §三 · 三条须同时满足\n\n'
+printf '═══ 判定门（G1 + Phase 2 增量）═══\n'
+printf '依据 docs/03 §三 · docs/09 §四 D-a\n\n'
 
-printf '[1/4] PlayerCore 零 UI 框架 import\n'
+printf '[1/5] PlayerCore 零 UI 框架 import\n'
 if grep -rE 'import (SwiftUI|UIKit|AppKit)' Sources/PlayerCore/; then
   fail 'PlayerCore 出现 UI 框架 import（违反 docs/02 施工约束 1）'
 fi
 pass 'PlayerCore 内无 SwiftUI / UIKit / AppKit'
 
-printf '\n[2/4] swift build\n'
+printf '\n[2/5] 根包 swift build\n'
 if ! swift build "${SWIFT_ESCAPE[@]+"${SWIFT_ESCAPE[@]}"}" > /tmp/gate-build.log 2>&1; then
   # 失败分支**必须给出东西**：匹配不到已知签名时回退打日志末尾（见 P-027）。
   excerpt="$(grep -E 'error:|BUILD FAILED|sandbox_apply' /tmp/gate-build.log | head -30 || true)"
@@ -35,7 +37,7 @@ if ! swift build "${SWIFT_ESCAPE[@]+"${SWIFT_ESCAPE[@]}"}" > /tmp/gate-build.log
 fi
 pass '构建通过'
 
-printf '\n[3/4] swift test\n'
+printf '\n[3/5] 根包 swift test\n'
 if ! swift test "${SWIFT_ESCAPE[@]+"${SWIFT_ESCAPE[@]}"}" > /tmp/gate-test.log 2>&1; then
   # ⚠️ 两个坑一起防：
   #   1. `grep … | head` 无匹配时退出码非 0，在 `set -e` 下会让**脚本先死掉**，fail 那句根本轮不到；
@@ -65,10 +67,32 @@ if [ "${failedRuns:-0}" -ne 0 ]; then
 fi
 pass '测试全绿'
 
-printf '\n[4/4] 变异测试\n'
+printf '\n[4/5] MPV 包构建（libmpv 适配器）\n'
+# ⚠️ 为什么必须有这一步：`MPV/` 是**独立包**，根包的 build/test 完全看不到它。
+# `P2-T4` 给 PlayerKernelEvent 加了 `.videoSizeChanged`，把 `MPVKernel` 的 switch 打破成非穷尽 ——
+# 根包门禁全绿，**这个编译破坏却一直没被任何信号发现**，直到本机终于有了产物（见 P-034）。
+# ⚠️ 产物 104 MB 且不入 git ⇒ **"存在才跑"，不硬失败**（docs/09 §四 D-a）；
+#    但跳过时必须**显式说明后果**，不能让人以为"绿了就是绿了"。
+if [ ! -d "$ROOT/MPV/Library/Libmpv.xcframework" ]; then
+  printf '  SKIP —— 产物未 stage（先跑 ./Tools/stage-libmpv.sh）\n'
+  printf '  ⚠️ 本次**未验证** MPVKernel 的编译，其破坏不会被这个门禁发现（P-034）\n'
+else
+  if ! (cd "$ROOT/MPV" && xcodebuild -scheme PlayerMPV \
+        -destination 'generic/platform=iOS Simulator' \
+        -derivedDataPath DD-iOS \
+        "${XCB_ESCAPE[@]+"${XCB_ESCAPE[@]}"}" build) > /tmp/gate-mpv.log 2>&1; then
+    excerpt="$(grep -E 'error:|BUILD FAILED' /tmp/gate-mpv.log | head -30 || true)"
+    [ -n "$excerpt" ] || excerpt="$(tail -20 /tmp/gate-mpv.log)"
+    printf '%s\n' "$excerpt"
+    fail 'MPV 包构建失败（日志 /tmp/gate-mpv.log）'
+  fi
+  pass 'MPV 包构建通过'
+fi
+
+printf '\n[5/5] 变异测试\n'
 if ! python3 Tools/mutation_check.py; then
   fail '存在存活或超时的变异体'
 fi
 pass '变异体全部被杀死'
 
-printf '\n═══ G1 达成 ═══\n'
+printf '\n═══ 判定门通过 ═══\n'
