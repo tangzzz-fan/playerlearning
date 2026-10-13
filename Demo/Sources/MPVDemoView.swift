@@ -6,183 +6,114 @@ import PlayerMPV
 import PlayerUI
 import SwiftUI
 
-/// Phase 2 的端到端样板：**surface → 内核 → 装配层 → UI**，四层真的连起来。
+/// App 层的**装配点**：把表面、内核、控制器、视图模型按正确顺序拧在一起。
 ///
-/// 它存在的意义不是"长得好看"（那属 P3 的 5 件套），而是把"真画面出来"这条链路
-/// 变成**可以亲手点一下**的东西 —— `G2` 的判定需要它。
+/// ⚠️ 顺序不可交换：`表面` 先给出 `wid` 句柄 → 才能构造内核（`wid` 必须在 `mpv_initialize` 之前）
+/// → 才能构造控制器与视图模型。`PlayerUI` 刻意不认识 libmpv，就是为了让这段装配留在这里。
 @MainActor
 @Observable
-final class MPVDemoModel {
-    private(set) var state: PlayerState = .idle
-    private(set) var currentTime: Double = 0
-    private(set) var duration: Double = 0
-    private(set) var naturalSize: CGSize = .zero
-    private(set) var audio = PlayerAudioState()
-    private(set) var isBuffering = false
-    private(set) var statusText = "未开始"
-    private(set) var isReady = false
+final class PlayerDemoModel {
+    let surface: WindowEmbedOutput
+    let player: PlayerViewModel
+    private(set) var note = ""
 
-    let output = WindowEmbedOutput()
-
-    private var controller: PlayerController?
-    private var pump: Task<Void, Never>?
-    private var memory: Task<Void, Never>?
-    /// `-traceUpdates`：把每次更新打到 stdout —— 端到端排查**必须**能看见事件的真实时序，
-    /// 否则只能靠截图猜（`xcrun simctl launch --console …` 能收到这些输出）。
     private let traces = ProcessInfo.processInfo.arguments.contains("-traceUpdates")
-    /// 进程启动时刻 —— 时间戳用**单调**的相对秒数，便于直接算"首屏耗时"这类指标。
     private let origin = Date()
+    private var memory: Task<Void, Never>?
 
-    /// 等 surface 就位后再建内核 —— 顺序不可交换（见 `VideoSurfaceView` 的说明）。
-    func activate() async {
-        guard controller == nil, let handle = output.windowEmbedHandle else { return }
-        let controller = PlayerController(kernel: MPVKernel(windowEmbedHandle: handle))
-        self.controller = controller
+    init() {
+        let surface = WindowEmbedOutput()
+        self.surface = surface
 
-        let updates = await controller.start()
-        pump = Task { [weak self] in
-            for await update in updates {
-                guard let self else { return }
-                self.apply(update)
-            }
+        guard let handle = surface.windowEmbedHandle else {
+            // 表面一定给得出句柄（它就是自身指针）。走到这里说明实现坏了，
+            // ⇒ **大声死**，而不是静默退回无画面（那正是 `P2-T7` 要消灭的失败形态）。
+            fatalError("WindowEmbedOutput 未给出 wid 句柄")
         }
+        player = PlayerViewModel(controller: PlayerController(kernel: MPVKernel(windowEmbedHandle: handle)))
 
-        let snapshot = await controller.snapshot()
-        state = snapshot.state
-        isReady = true
-        statusText = "内核就绪（headless 关闭：已绑定 wid 句柄）"
-
-        // 可脚本化的端到端入口：`xcrun simctl launch <udid> com.playerstack.demo -autoLoadSample`
-        // ⇒ 命令行就能驱动"加载样例 + 播放"，G2 的判定不必依赖手点。
         if traces {
-            memory = Task { [weak self] in
-                while !Task.isCancelled {
-                    guard let self else { return }
-                    if let footprint = MemoryFootprint.megabytes() {
-                        FileHandle.standardError.write(
-                            Data("[mem] \(String(format: "%7.3f", Date().timeIntervalSince(self.origin))) \(String(format: "%.1f", footprint)) MB\n".utf8)
-                        )
-                    }
-                    try? await Task.sleep(for: .seconds(1))
-                }
+            player.onUpdate = { [origin] update in
+                Self.writeToStderr("[trace] \(Self.stamp(at: origin)) \(update)")
             }
         }
+    }
 
+    func start() async {
+        await player.start()
+        if traces {
+            startMemorySampling()
+        }
         if ProcessInfo.processInfo.arguments.contains("-autoLoadSample") {
             await loadSample()
-            await play()
+            await player.play()
         }
+    }
+
+    func teardown() async {
+        memory?.cancel()
+        memory = nil
+        await player.teardown()
     }
 
     func loadSample() async {
-        guard let controller else { return }
         do {
-            statusText = "正在生成样例片段…"
+            note = "正在生成样例片段…"
             let url = try await SampleClipWriter.ensureClip()
-            statusText = "加载 \(url.lastPathComponent)"
-            try await controller.load(PlayerResource(url: url))
+            note = "已载入 \(url.lastPathComponent)"
+            await player.load(PlayerResource(url: url))
         } catch {
-            statusText = "加载失败：\(error)"
+            note = "生成样例失败：\(error)"
         }
     }
 
-    func play() async { await controller?.play() }
-    func pause() async { await controller?.pause() }
-    func stop() async { await controller?.stop() }
-    func seek(to seconds: Double) async { await controller?.seek(to: seconds) }
-    func skip(by delta: Double) async { await controller?.seek(to: currentTime + delta) }
-
-    func deactivate() {
-        pump?.cancel()
-        pump = nil
-        memory?.cancel()
-        memory = nil
-    }
-
-    private func apply(_ update: PlayerControllerUpdate) {
-        trace(update)
-        switch update {
-        case .stateChanged(let newState):
-            state = newState
-        case .timeChanged(let time):
-            currentTime = time.currentTime
-            duration = time.duration
-        case .bufferingChanged(let flag):
-            isBuffering = flag
-        case .videoSizeChanged(let size):
-            naturalSize = size
-        case .audioChanged(let state):
-            audio = state
+    private func startMemorySampling() {
+        memory = Task { [origin] in
+            while !Task.isCancelled {
+                if let footprint = MemoryFootprint.megabytes() {
+                    Self.writeToStderr("[mem] \(Self.stamp(at: origin)) \(String(format: "%.1f", footprint)) MB")
+                }
+                try? await Task.sleep(for: .seconds(1))
+            }
         }
     }
 
-    private func trace(_ update: PlayerControllerUpdate) {
-        guard traces else { return }
-        // ⚠️ 必须走**无缓冲**的 stderr 直写：`print` 是 stdout，在管道下是**块缓冲**，
-        // 而排查端到端免不了要 terminate 应用 —— 缓冲会被一起带走，表现为"一行输出都没有"
-        // （与 `P-014` 家族同源：没有输出推不出任何结论，见 `P-040`）。
-        FileHandle.standardError.write(Data("[trace] \(String(format: "%7.3f", Date().timeIntervalSince(origin))) \(update)\n".utf8))
+    /// 无缓冲直写 stderr：`print` 是 stdout，在管道下是**块缓冲**，
+    /// 而排查端到端免不了 terminate 应用 —— 缓冲会被一起带走，表现为"一行输出都没有"（`P-040`）。
+    private static func writeToStderr(_ line: String) {
+        FileHandle.standardError.write(Data((line + "\n").utf8))
+    }
+
+    private static func stamp(at origin: Date) -> String {
+        String(format: "%7.3f", Date().timeIntervalSince(origin))
     }
 }
 
 struct MPVDemoView: View {
-    @State private var model = MPVDemoModel()
+    @State private var demo = PlayerDemoModel()
 
     var body: some View {
         VStack(spacing: 0) {
-            VideoSurfaceView(output: model.output)
-                .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                .background(.black)
+            PlayerScreenView(model: demo.player, surface: demo.surface)
 
-            statusPanel
-
-            controls
-        }
-        .navigationTitle("Phase 2 · 端到端")
-        .navigationBarTitleDisplayMode(.inline)
-        .task { await model.activate() }
-        .onDisappear { model.deactivate() }
-    }
-
-    private var statusPanel: some View {
-        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
-            row("状态", "\(model.state)")
-            row("时间", String(format: "%.2f / %.2f s", model.currentTime, model.duration))
-            row("画面", "\(Int(model.naturalSize.width))×\(Int(model.naturalSize.height))")
-            row("音频", "解码 \(model.audio.decoderSampleRate) Hz / 输出 \(model.audio.outputSampleRate) Hz")
-            row("缓冲", model.isBuffering ? "是" : "否")
-            row("说明", model.statusText)
-        }
-        .font(.footnote.monospaced())
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(.thinMaterial)
-    }
-
-    private func row(_ title: String, _ value: String) -> some View {
-        GridRow {
-            Text(title).foregroundStyle(.secondary)
-            Text(value).gridColumnAlignment(.leading)
-        }
-    }
-
-    private var controls: some View {
-        VStack(spacing: 10) {
-            HStack {
-                Button("加载样例") { Task { await model.loadSample() } }
-                Button("播放") { Task { await model.play() } }
-                Button("暂停") { Task { await model.pause() } }
-                Button("停止") { Task { await model.stop() } }
+            HStack(spacing: 12) {
+                Button("载入样例") { Task { await demo.loadSample() } }
+                    .accessibilityIdentifier("demo.loadSample")
+                Button("停止") { Task { await demo.player.stop() } }
+                    .accessibilityIdentifier("demo.stop")
+                Button("−10 s") { Task { await demo.player.skip(by: -10) } }
+                    .accessibilityIdentifier("demo.back10")
+                Button("+10 s") { Task { await demo.player.skip(by: 10) } }
+                    .accessibilityIdentifier("demo.forward10")
+                Text(demo.note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("demo.note")
             }
-            HStack {
-                Button("−10 s") { Task { await model.skip(by: -10) } }
-                Button("−1 s") { Task { await model.skip(by: -1) } }
-                Button("+1 s") { Task { await model.skip(by: 1) } }
-                Button("+10 s") { Task { await model.skip(by: 10) } }
-            }
+            .buttonStyle(.bordered)
+            .padding(12)
         }
-        .buttonStyle(.bordered)
-        .disabled(!model.isReady)
-        .padding(12)
+        .task { await demo.start() }
+        .onDisappear { Task { await demo.teardown() } }
     }
 }

@@ -50,6 +50,24 @@ public final class WindowEmbedOutput: CAMetalLayer, VideoOutputProtocol {
         }
     }
 
+    /// 把这一层摆到宿主视图的 bounds 上，并把 `drawableSize` 同步成**像素**尺寸。
+    ///
+    /// 逻辑收在这里（而不是各平台各写一遍），因为"摆位置 + 防绘制尺寸退化"这件事
+    /// **两个平台完全一样**，只有"从哪拿 scale"不同（`UITraitCollection` / `NSWindow`）。
+    public func layout(in bounds: CGRect, scale: CGFloat) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+
+        frame = bounds
+        contentsScale = scale
+        let pixelSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+        // 与 `drawableSize` 的退化守卫同一口径：MoltenVK 会把 ≤1 设成 1×1 ⇒ 闪烁。
+        if pixelSize.width > 1, pixelSize.height > 1 {
+            drawableSize = pixelSize
+        }
+    }
+
     private func configure() {
         framebufferOnly = true
         backgroundColor = CGColor(gray: 0, alpha: 1)
