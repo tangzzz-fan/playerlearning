@@ -1,0 +1,14 @@
+--- a/Sources/BuildScripts/XCFrameworkBuild/base.swift
++++ b/Sources/BuildScripts/XCFrameworkBuild/base.swift
+@@ -1338,6 +1338,11 @@
+         if !environment.keys.contains("PATH") {
+             environment["PATH"] = BaseBuild.defaultPath
+         }
++        // 本函数只补 HOME/PATH，**不继承**父进程环境。MITM 代理下 wget 需要 WGETRC
++        // 才能跳过证书校验，故在此显式转发；未设置时行为完全不变（环境适配，非构建配方）。
++        if let wgetrc = ProcessInfo.processInfo.environment["WGETRC"] {
++            environment["WGETRC"] = wgetrc
++        }
+         task.environment = environment
+ 
+         var outputFileHandle: FileHandle?
