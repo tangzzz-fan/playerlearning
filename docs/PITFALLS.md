@@ -213,6 +213,30 @@
 
 **防再犯**：**任何"就地改源文件再跑"的工具，都必须先回答"进程被杀时会怎样"**。
 
+> ### 📌 2026-10-13 补充：**SIGKILL / 会话中断**这一路，信号处理兜不住 —— 必须靠"事后核对"
+>
+> **实际发生**：`./Tools/gate.sh` 在后台跑变异检查时，**整个会话被中断**（进程收到 SIGKILL）。
+> `SIGKILL` **不可捕获** ⇒ `guard()` 没机会执行 ⇒ 源文件**真的留在了变异态**：
+>
+> ```diff
+>  Sources/PlayerCore/FakeKernel.swift
+> -        emit(.stateChanged(.readyToPlay))
+> +
+> ```
+>
+> **发现方式**（不是设计出来的，是撞上的）：之后跑测试，**5 个与本次改动毫无关系的既有用例集体失败**，
+> 证据是 `snapshot.state → .preparing` —— 正好对应变异体「fake: load 不再上报 .readyToPlay」。
+> 由此反推出"源文件在变异态"，`git diff Sources/` 一分钟内定位。
+>
+> **最有价值的一点**：故障的表象是**"5 个不相关的测试挂了"**，很容易被误判成"刚才改的东西有问题"。
+> 判据是**相关性**：改动只碰测试框架，却让"内核状态机"类用例挂掉 ⇒ **先怀疑工作区，不要先怀疑自己的改动**。
+>
+> **防再犯（追加两条）**：
+> 7. **会话中断 / 强杀之后，第一件事是 `git diff Sources/`（或 `git status --short`）**，再谈跑测试。
+> 8. `Tools/mutation_check.py --restore` 是**幂等**的兜底入口（备份目录在，就能全量还原）；备份是**持久**的，不依赖进程存活 —— 这正是第 5 条设计的回报。
+>
+> ⇒ 结论修正：**崩溃安全设计能让"可恢复"，但恢复动作必须由人/流程触发。** 工具只能保证"备份还在"。
+
 ---
 
 ## P-016 · 一个初始化器缺参错误，会**级联**出一串看似无关的假错误
@@ -393,6 +417,319 @@ Test Suite 'All tests' passed
 
 **防再犯**：**报测试数不要用 `tail -1`**。要么按 bundle 汇总，要么用 `swift test --list-tests | grep -c` 直接数条目。
 > 这条与 `P-014`/`P-019` 同族：**"看起来没变" 不等于 "没发生"**。凡是"改动后数字完全没动"，先怀疑**采集方式**，而不是接受结论。
+
+---
+
+## P-024 · ⚠️ 受限 shell 里 SwiftPM **直接失败**，而报错正文指向的是 `Package.swift`
+
+**现象**：`swift build` / `swift test` 报
+
+```
+error: 'playerlearning': Invalid manifest (compiled with: ["…/swiftc", "-vfsoverlay", …, "Package.swift", "-o", "…/playerlearning-manifest"])
+sandbox-exec: sandbox_apply: Operation not permitted
+```
+
+正文写着 **「Invalid manifest」并打印一整行 swiftc 命令** —— 极易被读成"`Package.swift` 写错了"，于是去改 manifest。
+
+**根因**：本会话的 shell 已经在**受限 profile** 里，而 macOS **不允许在受限进程里再 apply 一层 deny-default 沙箱**。SwiftPM 编译清单 / 跑插件时会自己套沙箱 ⇒ **内层那次 apply 被拒**。`Package.swift` 本身没问题。
+
+**处置**：命令后加 `--disable-sandbox` 立刻恢复（实测 `Build complete! (9.21秒)`）。已落成脚本内建：
+
+| 文件 | 做法 |
+| --- | --- |
+| `Tools/gate.sh` | 开头 probe，失败则给 `swift build` / `swift test` 都补 `--disable-sandbox`，并打印一行提示 |
+| `Tools/mutation_check.py` | `swift_escape_args()` 同一 probe，注入 `["swift", "test", *args]` |
+
+**判据**（一条命令，别猜）：
+
+```bash
+sandbox-exec -p '(version 1)(deny default)(allow file-read*)' /bin/echo ok
+# 退出码 0        ⇒ 不需要逃逸参数
+# 非 0（本机 71）  ⇒ 需要
+```
+
+**防再犯**：
+1. 看到 **`Invalid manifest` 先往日志末尾找 `sandbox_apply`** —— 别去改 `Package.swift`。
+2. 两个脚本都写成**条件式**（probe 通过就是 no-op）⇒ 正常终端与受限 shell 都能跑。
+3. ⚠️ **绝不把这个参数写进工程文件**（`Package.swift` / `project.yml` / scheme）—— 那会削弱正常终端与发版构建的隔离。**它只属于"这一次命令"。**
+
+> 与 `P-019`/`P-023` 同族但**方向相反**：那两条是"空输出被当成没发生"，这条是**"报错正文指错了地方"**。共同点：**症状与根因差一层，别停在第一句。**
+> 沙箱逃逸这一段知识的正文在技能 `apple-build-sandbox`，本项目的两个脚本是它的落地。
+
+---
+
+## P-025 · ⚠️ `#expect` 不能直接比较**存在元类型**（`any P.Type`），尽管普通表达式可以
+
+**背景**：测试框架由 XCTest 迁移到 **Swift Testing** 时，机械改写断言并**不代表语义等价**。
+
+**现象**：把
+
+```swift
+XCTAssertTrue(registry.kernelTypes[0] == KernelStub<StubTagB>.self)   // ✅ 能编译
+```
+
+改成
+
+```swift
+#expect(registry.kernelTypes[0] == KernelStub<StubTagB>.self)          // ❌ 编译失败
+```
+
+报
+
+```
+macro expansion #expect:1:61: error: binary operator '==' cannot be applied to operands of type
+'any PlayerKernelProtocol' and 'any PlayerKernelProtocol.Type'
+```
+
+**根因**：`#expect` 的宏展开会把**两个操作数各自捕获成变量**（便于失败时打印子表达式值），
+存在元类型的 `==` 推断因此断裂。**同样的表达式写在普通函数里完全合法** —— 这是探针实测，不是猜：
+
+```swift
+protocol P { init() }
+struct A: P { init() {} }
+let arr: [any P.Type] = [A.self]
+let x: any P.Type = A.self
+
+arr[0] == x                                                          // ✅ true（普通表达式）
+func same(_ l: any P.Type, _ r: any P.Type) -> Bool { l == r }
+same(arr[0], x)                                                      // ✅ true（包一层函数）
+```
+
+> 顺带修正 `P-013` 的措辞：**具体**元类型（`X.Type`）支持 `==`；本条的坑出在**存在**元类型（`any P.Type`）上，
+> 且只在**宏展开**的环境里触发。
+
+**处置**：**包一层普通函数**，让宏只看到一个 `Bool`（`Tests/PlayerCoreTests/PlayerKernelRegistryTests.swift`）：
+
+```swift
+private func isSameKernelType(
+    _ lhs: (any PlayerKernelProtocol.Type)?,
+    _ rhs: any PlayerKernelProtocol.Type
+) -> Bool {
+    guard let lhs else { return false }
+    return lhs == rhs
+}
+```
+
+参数用 `Optional` 而不是在调用处写 `first ?? SomeType.self`：**兜底会把 nil 掩盖成假绿**。
+
+**防再犯**：
+1. **元类型 / 存在类型（`any`）/ 元类型数组**出现在断言里 ⇒ 先写探针（同 `P-013`），别在测试文件里边写边试。
+2. **迁移断言框架时，"能编译"与"断言等价"是两件事。** 宏会改变表达式的类型推断环境 —— 这类错误只在编译期暴露，不会伪装成"测试通过"，已经是运气好的那种。
+
+---
+
+## P-026 · 迁移到 Swift Testing 的四处连带改动（框架换了，管道也得换）
+
+**背景**：项目测试由 XCTest 全部改为 **Swift Testing**（`@Test` / `#expect` / `#require`，`@Suite`）。断言只是第一层，还有四处会连带断。
+
+| # | 连带项 | 症状 / 原因 | 处置 |
+| --- | --- | --- | --- |
+| 1 | **门禁的计数解析** | XCTest 是 `Executed 75 tests, with 0 failures`；Swift Testing 是单行 `✔ Test run with 94 tests in 9 suites passed after …`。旧正则匹配不到 ⇒ 旧 `gate.sh` 打印空计数 | 换正则；**并且必须校验"真的取到了汇总行"**，取不到就 `fail` |
+| 2 | **默认并行执行** | XCTest 是串行的；Swift Testing **默认并行**。触及 `CAMetalLayer` / Metal / 全局共享状态的套件可能因此 flakey | 给这类套件显式加 `@Suite(.serialized)`（本例 `WindowEmbedOutputTests`） |
+| 3 | **`XCTestExpectation` 没有对应物** | `expectation(description:)` / `wait(for:timeout:)` 不存在 | 换 `withCheckedContinuation`（本例）或 `confirmation`。跨线程回调还要处理非 `Sendable` 捕获 |
+| 4 | **`XCTUnwrap` → `try #require`** | 逐处改写 | 注意 `#require` 也受第 1 类宏展开限制（见 `P-025`） |
+
+**第 1 条最危险，值得单独说**：它属于 `P-023` 家族 —— **"退出码 0"不等于"测试跑了"**。
+如果只换正则不校验，一旦正则失配，门禁会**打印空计数却依然判绿**。所以 `gate.sh` 现在是：
+
+```bash
+summary="$(grep -Eo 'Test run with [0-9]+ tests?( in [0-9]+ suites?)? (passed|failed)[^.]*' /tmp/gate-test.log | tail -1 || true)"
+if [ -z "$summary" ]; then
+  tail -20 /tmp/gate-test.log
+  fail '未找到测试汇总行 —— 测试可能根本没执行（P-023 / P-026）'
+fi
+```
+
+> ### 📌 补充：这条**第一次是踩出来的**，而且踩的方式比正则本身更值钱
+>
+> 第一版正则写的是 `'Test run with [0-9]+ tests? (passed|failed)[^.]*'`
+> —— **没算上 Swift Testing 汇总行里的 ` in 9 suites`**，于是一条都匹配不到。
+>
+> 结果不是"打出空计数"，而是**整个门禁在 `[3/4] swift test` 之后无声退出，退出码 1，
+> 一行错误信息都没有**。原因：
+>
+> ```
+> set -euo pipefail
+> summary="$(grep -Eo '…' /tmp/gate-test.log | tail -1)"   # grep 无匹配 ⇒ 退出码 1
+>                                                          # ⇒ pipefail ⇒ 管道 1
+>                                                          # ⇒ $() 赋值失败 ⇒ set -e 终止脚本
+> ```
+>
+> **三个开关（`-e` / `-u` / `pipefail`）叠在一起，把"没匹配到"放大成了"脚本静默死掉"。**
+> 而且死因**写在日志之后**，看起来像"卡在跑测试"。
+>
+> **修法有两层，缺一不可**：① 正则容下 ` in N suites`；② **`|| true` 兜住**，把"没取到"交给显式的 `if [ -z ]` 分支报错。
+>
+> **防再犯（追加）**：**凡是 `$( … | grep … )` 形式的赋值，都要问一句"没匹配时会怎样"**。
+> 在 `set -euo pipefail` 下答案是"静默死" —— 要么 `|| true` + 显式判空，要么干脆别用管道。
+> 这条与 `P-019`（空输出 ≠ 没发生）是同一族：**没有报错的退出，比报错更难查。**
+
+> ### 📌 追加 2：`P-023` 的坑**没有因为换框架而消失，只是换了签名**
+>
+> 修完上面两个坑之后，门禁打印出 `Test run with 86 tests` —— 而实际是 **95 条**（86 + 9）。
+>
+> **根因与 `P-023` 一模一样**：`swift test` 会为**每个 test bundle** 各打一行
+> `Test run with N tests …`，所以 `tail -1` 只拿到**最后一个 bundle**，剩下的被丢掉。
+> XCtest 时代那行叫 `Executed N tests, with 0 failures`；换成 Swift Testing 之后叫
+> `Test run with N tests in M suites passed after …` —— **格式换了，按 bundle 各打一次的机制没换。**
+>
+> ⇒ 门禁改为**跨所有 run 求和**，并且核对 run 数：
+>
+> ```bash
+> runs="$(grep -cE 'Test run with [0-9]+ tests?' /tmp/gate-test.log || true)"
+> [ "${runs:-0}" -eq 0 ] && fail '未找到任何测试汇总行 —— 测试可能根本没执行'
+> total="$(grep -Eo 'Test run with [0-9]+ tests?' /tmp/gate-test.log | grep -Eo '[0-9]+' | awk '{s+=$1} END {print s+0}')"
+> failedRuns="$(grep -E 'Test run with [0-9]+ tests?' /tmp/gate-test.log | grep -c 'failed' || true)"
+> ```
+>
+> **教训（比结果值钱）**：**"换个框架"时，要按「机制」而不是「字符串」去想兼容性。**
+> 我第一版只把 `Executed N tests` 换成 `Test run with N tests`，**机制层面的"按 bundle 重复输出"被漏掉了** ——
+> 于是同一个坑以新面目又踩一次。`P-023` 的正文至今有效，它的**签名会随工具链变**。
+
+**防再犯**：**换测试框架 = 换门禁管道**。改断言的同时，把 `gate.sh` / `mutation_check.py` 的解析与超时策略一起过一遍。
+
+---
+
+---
+
+# 📥 移植区：来自其他项目的通用坑（2026-10-13）
+
+> **来源项目**：`Marquee`（`docs/PITFALLS.md`，E/F/G/R/V 各节）· `HabitLoop`（`docs/PITFALLS.md`，12 条）·
+> `Self-Skills-Init/meta/inbox/pitfalls-2026-10-03.md`（跨项目待回流清单）。
+> **移植原则**：只搬**与本项目技术栈相关、且与语言/工具链/流程有关**的条目；完全绑定原项目业务的（图标网格、StoreKit、
+> Carbon 热键、日期语义等）**不搬**。编号续排（本项目规则：只增不删、编号不复用），每条标注来源，便于回溯。
+> **去重**：与既有条目同源的，只记"同源"不重复展开。
+
+## P-027 · 失败分支匹配不到已知签名时**什么都不列**（跨 4 次命中，本项目已应用）
+
+**症状**：脚本报「✗ 失败（exit N）」，**后面一片空白**。最需要线索的时候没有线索。
+
+**根因**：失败分支的输出靠 `grep -E '<已知签名>'` 过滤，而**未预料到的失败类型一条都不匹配** ⇒ 什么都不打印。
+
+**处置**（已落成 `Tools/gate.sh` 的构建 / 测试两个失败分支）：
+
+```bash
+excerpt="$(grep -E 'error:|✘|Expectation failed|recorded an issue|BUILD FAILED' /tmp/gate-test.log | head -30 || true)"
+[ -n "$excerpt" ] || excerpt="$(tail -20 /tmp/gate-test.log)"   # ← 空则回退打日志末尾
+printf '%s\n' "$excerpt"
+fail '测试未全绿（日志 /tmp/gate-test.log）'
+```
+
+**同族第二个坑（本项目这次才踩到）**：`grep … | head` 在**无匹配**时退出码非 0，
+而它在 `if …; then` 的**分支体**里 ⇒ **`set -e` 会先杀掉脚本**，`fail` 那句根本轮不到执行。
+所以必须 `|| true` 兜住。
+
+**来源**：`meta/inbox/pitfalls-2026-10-03.md` §一 `failure-branch-prints-nothing`（HabitLoop + meta-selftest-project，跨 4 次）·
+`HabitLoop` #6。
+
+**防再犯**：**失败分支的输出是最容易被漏测的路径** —— 改完门禁脚本，**故意让它失败一次**看输出。
+
+---
+
+## P-028 · agent 会话里的 `grep` 是 **toybox**，而它的失配是**完全静默**的
+
+**症状**：`grep -n "A\|B" file` 返回**空**，据此得出"文件里没有"的结论。实际文件里有。
+
+**根因**（三层，越往下越值钱）：
+
+1. `grep` 的 BRE（基本正则）**不支持 `\|` 作为"或"**（GNU 的扩展）。要"或"就用 `-E` + `|`。
+2. macOS 自带的是 **BSD grep** —— `\s` / `\d` / `\w` **不是字符类**，会被当字面量 `s` / `d` / `w`，
+   于是**返回空、退出码 1、一个字都不报**。正解是 POSIX 字符类：`[[:space:]]` / `[0-9]` / `[[:alpha:]]`。
+3. ⚠️ **订正（Marquee 同日实测）**：agent 会话的 `PATH` 首部是沙箱 shim 目录，
+   `grep sed find ls head tail cat wc …` 共 22 个命令被换成了 **toybox** 0.8.13；
+   **你自己的终端走 `/usr/bin/grep`（BSD），agent 会话走 toybox** —— 同一条命令、两种结果。
+   更致命的是回退条件：shim **只在 stderr 出现 `Unknown option` 时**才 exec 真工具
+   ⇒ **语义差异永远不触发回退，一律静默失配**。
+
+**结论（本项目本次实际撞上两次）**：搜索**一律用工具版的 Grep（ripgrep）**，或在脚本里用 `grep -E` + POSIX 字符类；
+**绝不用 `\|`、绝不用 `\s`/`\d`**。并且：**"我在终端里跑是好的"对 agent 会话没有任何证明力。**
+
+**来源**：`Marquee` V140 + V141（含其自身的订正）· 本项目本次两次实测复现。
+
+**防再犯**：**"返回空"与"表达式错"必须能区分开。** 一条会静默失配的正则，比一条报错的正则危险得多。
+
+---
+
+## P-029 · `#expect(...)` 的宏展开里**不能调用 `mutating` 方法**
+
+**症状**：`#expect(model.apply(.currentTimeChanged(0.1)) == nil)` 报 `$0 is immutable` / 类型推断混乱。
+
+**根因**：`#expect` 会把表达式重写成"先捕获操作数"，`mutating` 调用落在不可变上下文里。
+
+**处置**：**先赋给局部变量再断言**（本项目 `PlayerTimeModelTests` 全程遵守）：
+
+```swift
+let update = model.apply(.currentTimeChanged(0.1))
+#expect(update == nil)
+```
+
+> 这与 `P-025` 是同一棵树的两根枝：**`#expect` 的宏展开会改变表达式的求值/类型环境**
+> —— 一个是 `mutating`，一个是存在元类型。
+
+**来源**：`Marquee` E32。
+
+---
+
+## P-030 · xcodegen：**默认不生成 scheme**，且新增源文件后必须重新 generate
+
+| 子坑 | 症状 | 处置 |
+| --- | --- | --- |
+| **默认无 scheme** | `xcodegen generate` 成功，但 `xcodebuild -scheme X` 报找不到；Xcode 里只有自动创建的 **user scheme**（在 `xcuserdata/`，随时可能不在） | 在 `project.yml` 里**显式声明 `schemes:`**（本项目本次亲测命中：生成后 `xcodebuild -list` 无 Schemes 段）。**不要依赖 Xcode 自动创建的 user scheme** |
+| **新增/删除源文件后不重新 generate** | 报错出现在**调用方**（"找不到某类型"），而不是新文件本身，极易查错方向 | 改动文件集合后跑 `xcodegen generate`；更彻底的做法是用 Xcode 16+ 的 `type: syncedFolder`（文件系统同步组） |
+| `schemePathPrefix` 默认值 | 默认 `"../../"` 是给**非 workspace** 工程的；workspace 形态要用 `"../"`。且它是**字符串拼接**不是路径解析，自己再补 `../` 会叠加 | 先确认 scheme 实际落在哪，再决定是否改；**不要想当然改成 `"../"`** |
+
+**来源**：`Marquee` F41 · F42 · V139。
+
+---
+
+## P-031 · shell 里三个静默杀手（中文变量名 / heredoc / 管道）
+
+| # | 症状 | 根因 | 修法 |
+| --- | --- | --- | --- |
+| 1 | `line 98: code?: unbound variable`，那个 `?` 是被截断的汉字 | `$code）` 里**多字节字符被吞进变量名**。**只在特定 locale 下复现** | **一律写 `${code}`** —— 凡是要接中文，就加花括号 |
+| 2 | heredoc 里的命令失败后，**下一行的兜底逻辑没跑** | `set -e` 在 `cmd <<'PY' … PY` 失败时**立刻中止脚本**，`[ $? -eq 0 ] \|\| FAIL=1` 轮不到执行 | 用 `if ! cmd <<'PY' … PY; then FAIL=1; fi` —— `if` 的测试位置不受 `set -e` 约束 |
+| 3 | `$(grep … \| tail -1)` 无匹配时**整个脚本无声退出** | `-e` + `pipefail` 把"没匹配到"放大成"脚本死掉"，且死因写在日志之后 | `\|\| true` 兜住 + 显式判空（本项目 `P-026` 已展开） |
+
+**来源**：`HabitLoop` #1 · #5 · `Marquee` F43。
+
+---
+
+## P-032 · Swift 6 并发的四个小坑（都与 `Sendable` 有关）
+
+| # | 症状 | 处置 |
+| --- | --- | --- |
+| 1 | `stored property 'fileManager' of 'Sendable'-conforming struct … has non-Sendable type 'FileManager'` | **不要存**，改成计算属性 `private var fileManager: FileManager { .default }`。**别去折腾 `@unchecked Sendable`** |
+| 2 | `NSLock.lock()` 在 async 上下文编译失败（`unavailable from asynchronous contexts`） | 把加解锁收进一个同步闭包（`withLocked`），异步的事放到闭包**外** |
+| 3 | 模块缺 `import Foundation` 会让 **`Equatable` 静默合成失败**（`URL` / `Date` / `UUID` 场景） | 用到这几个类型就显式 `import Foundation`；`CGImageDestination*` 同源要 `import ImageIO` |
+| 4 | `nonisolated deinit` 不能碰非 `Sendable` 存储属性（`OpaquePointer` 这类） | **本项目已有等价条目 `P-022`**（所有权持有者 + 把释放放进引用类型的 `deinit`）—— 同源，不重复展开 |
+
+**来源**：`HabitLoop` #2 · `Marquee` F44 · G51（第 4 条与 `Marquee` G50 同源）。
+
+---
+
+## P-033 · 测试夹具必须**确定性**
+
+**症状**：`Expectation failed: store.load() == sampleDatabase()` —— 看起来像"落盘实现有问题"。
+
+**根因**：`Habit(id: UUID = UUID())` 每次构造都生成新 id；"写进去的库"与"读回来的库"是**两次独立构造**。
+
+**处置**：测试夹具**固定 UUID / 固定时间 / 固定路径**，不依赖默认随机值。
+
+**分诊规则（比条目本身值钱）**：判据红了，**先分"实现错"还是"期望错"**，别急着改实现。
+
+**来源**：`HabitLoop` #3。
+
+---
+
+> ### 与既有条目同源、故不重复展开的（仅登记映射，便于日后合并检索）
+>
+> | 其他项目的条目 | 本项目已有 |
+> | --- | --- |
+> | `Marquee` V137（嵌套沙箱，`swiftc -disable-sandbox`；官方那三个参数无效） | **`P-024`** |
+> | `Marquee` R117（变异不变红 = 断言盲 or 死代码） | **`P-017`** |
+> | `Marquee` G50（Swift 6 `nonisolated deinit` + 非 Sendable） | **`P-022`** |
+> | `HabitLoop` #6（swift-testing 失败行不在常见匹配模式里） | **`P-027`** |
+> | `Marquee` F39/F40（宿主沙箱里 `xcodebuild` 编不过 SwiftUI 宏；判据：SwiftPM 能过、`xcodebuild` 不能 ⇒ 环境问题） | **`P-024`** + 技能 `apple-build-sandbox` |
 
 
 

@@ -8,7 +8,7 @@
 | --- | --- |
 | M0 路线成立 | ✅ 已产出**自建动态 LGPL-2.1 libmpv 产物**，模拟器与真机（iPhone 16 Pro）双通出画面 |
 | M1 地基可测 | ✅ 内核边界已立（`PlayerKernelProtocol` / 注册表 / `FakeKernel` / 状态机 / 时间模型）· **84 tests 全绿** · 变异 **27/27** 杀死 · `PlayerCore` 零 UI 依赖 |
-| M2 能看片 | ⬅ **进行中**（Phase 2：`MPVKernel` 生命周期 + 事件循环 ✓ · `wid` 视频表面 ✓ · 下一步真画面） |
+| M2 能看片 | ⬅ **进行中**（Phase 2：`MPVKernel` 生命周期 + 事件循环 ✓ · `wid` 视频表面 ✓ · **装配层 `PlayerController` ✓** · 下一步真画面） |
 
 门禁：`./Tools/gate.sh`（退出码 0 = `G1` 达成）。
 
@@ -24,7 +24,8 @@
 | [`docs/06-P0-T5a技术验证报告.md`](docs/06-P0-T5a技术验证报告.md) | `P0-T5a`：`wid` + MoltenVK 技术验证（模拟器 + 真机双通） | `P2` 接入前 |
 | [`docs/07-P0-T5b验证报告.md`](docs/07-P0-T5b验证报告.md) | `P0-T5b`：**自建动态 LGPL-2.1 产物**（`G0` 达成）· 许可证据链 · 端到端 | 需要产物规格时 |
 | [`docs/08-P1验证报告.md`](docs/08-P1验证报告.md) | `P1`：骨架与内核抽象 · **`G1` 达成** · 交付物清单 · 集成测试抓到的缺陷 | 进 Phase 2 前 |
-| [`docs/PITFALLS.md`](docs/PITFALLS.md) | **踩坑日志**（现象 → 根因 → 处置 → 防再犯），现有 19 条 | **动手前扫一遍**，能省掉重复排查 |
+| [`docs/09-P2就绪度分析与票面修正.md`](docs/09-P2就绪度分析与票面修正.md) | `P2` 开工前复核：**票面缺装配层的证据** · `MPVKernel` 六项缺陷 · 两处拍板决策 · `G2` 口径细化 | **当前阶段的必读** |
+| [`docs/PITFALLS.md`](docs/PITFALLS.md) | **踩坑日志**（现象 → 根因 → 处置 → 防再犯），现有 **33 条**（`P-001`–`P-033`），末段为**跨项目移植区**（来源 Marquee / HabitLoop / meta 待回流清单） | **动手前扫一遍**，能省掉重复排查 |
 
 ## 工程结构
 
@@ -41,13 +42,18 @@ Demo/                    ← app shell（project.yml → xcodegen 生成，产�
 
 ```bash
 ./Tools/gate.sh                        # G1 门禁：零 UI import + build + test + 变异（退出 0 即通过）
-swift build && swift test              # 只跑根包
-python3 Tools/mutation_check.py        # 只跑变异闸门
-cd Demo && xcodegen generate           # 生成 app 工程
+swift build && swift test              # 只跑根包（⚠️ 受限 shell 需加 --disable-sandbox，gate.sh 会自动判断）
+python3 Tools/mutation_check.py        # 只跑变异闸门（--restore 可还原被就地改动的源文件）
+cd Demo && xcodegen generate           # 生成 app 工程（.xcodeproj 不入 git）
+xcodebuild -project Demo/PlayerStackDemo.xcodeproj -scheme PlayerStackDemo \
+  -destination 'generic/platform=iOS Simulator' build
 
 ./Tools/stage-libmpv.sh                # ⚠️ 构建 MPV 包前必须先跑（产物 104 MB，gitignored）
 cd MPV && xcodebuild -scheme PlayerMPV -destination 'platform=iOS Simulator' build
 ```
+
+> ⚠️ **测试一律用 Swift Testing**（`@Test` / `#expect` / `try #require`），**不使用 XCTest**。触及 `CAMetalLayer` 的套件须显式 `@Suite(.serialized)`（并行是默认）。
+> ⚠️ **`Demo/project.yml` 必须显式声明 `schemes:`** —— xcodegen **默认不生成** scheme，没有它 `xcodebuild -scheme` 与 CI 全不可用（见 `P-030`）。
 
 > ⚠️ **`PlayerCore` 里出现 `import SwiftUI` / `UIKit` / `AppKit` 即视为违规** —— 这是 `G1` 判定门的一条硬线，破了就永久失去可测性。
 > ⚠️ **根包不得引用 libmpv** —— 适配器只在 `MPV/` 独立包内。原因：自建产物**只有 iOS 切片**，而 SPM 会校验 `binaryTarget` 路径存在性（与平台条件无关）⇒ 一旦放进根包，**新克隆的 `swift test` 必失败**。
@@ -109,15 +115,22 @@ playerlearning/
 
 ## 下一步
 
-进 **Phase 2 · libmpv 适配器**（`docs/03` §三），判定门 **`G2`：本地 mkv 出画 + 出声 + 能 seek**。
+进 **Phase 2 · libmpv 适配器**。票面已由 [`docs/09`](docs/09-P2就绪度分析与票面修正.md) 修正为九张（原三张），判定门 **`G2`**：本地 mkv **出画 + 出声 + `seek` 落点精确 + `./Tools/gate.sh` 退出 0**。
 
-| ticket | 内容 |
-| --- | --- |
-| `P2-T1` | `MPVKernel` 实现 `PlayerKernelProtocol`：`mpv_create` / `mpv_initialize` / 事件循环（`mpv_set_wakeup_callback` + `mpv_wait_event`） |
-| `P2-T2` | `VideoOutputProtocol` 抽象 + `WindowEmbedOutput`（`wid` 实现，`CAMetalLayer`） |
-| `P2-T3` | mpv 属性 ↔ 模型映射（`time-pos` / `duration` / `pause` / `paused-for-cache` / `width` / `height` / `track-list`） |
-| `P2-T4` | 播放控制：load / play / pause / seek / stop；`hwdec=videotoolbox` |
-| `P2-T5` | 本地 mkv 端到端验证（含多音轨文件） |
+| ticket | 内容 | 状态 |
+| --- | --- | --- |
+| `P2-T0` | 模块拓扑：libmpv 适配器独立成包 `MPV/` | ✅ |
+| `P2-T1` | `MPVKernel` 生命周期 + 事件循环 | ✅（编译层） |
+| `P2-T2` | `VideoOutputProtocol` + `WindowEmbedOutput`（`wid`） | ✅ |
+| `P2-T3` | **装配层 `PlayerController`** —— 内核事件流的唯一消费者 + 扇出 | ✅（同日完成测试框架迁移 → Swift Testing、xcodegen scheme、门禁管道修复） |
+| `P2-T4` | `PlayerKernelSnapshot` 加 `naturalSize`（跨层，与 T5 同批） | ⬅ **下一步** |
+| `P2-T5` | 属性映射补全 + `pause` 改 observe（取消乐观 emit） | 待开始 |
+| `P2-T6` | `END_FILE` 区分错误 → `.failed` | 待开始 |
+| `P2-T7` | `attach` 时序收口 + wakeup 回调 `passRetained` | 待开始 |
+| `P2-T8` | 播放控制 + `seek` 用 `absolute+exact`（钳制归装配层） | 待开始 |
+| `P2-T9` | `MPV/` 包纳入门禁（test target + `gate.sh` 条件步骤） | 待开始 |
+| `P2-T10` | Demo 接入 `PlayerMPV` 包（端到端硬前置） | 待开始 |
+| `P2-T11` | 端到端 + 性能基线 + `docs/10` + `G2` 固化 | 待开始 |
 
 **可直接复用的既有成果**：产物接入方式与已验证配置见 [`docs/06`](docs/06-P0-T5a技术验证报告.md) / [`docs/07`](docs/07-P0-T5b验证报告.md)；`spike/p0-t5b-lgpl-dynamic-build/verify/` 就是一份能跑通的接线样板。
 
