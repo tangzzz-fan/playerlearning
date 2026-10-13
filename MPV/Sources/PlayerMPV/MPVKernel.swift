@@ -178,13 +178,24 @@ public actor MPVKernel: PlayerKernelProtocol {
         case MPV_EVENT_FILE_LOADED:
             emit(.stateChanged(.readyToPlay))
         case MPV_EVENT_END_FILE:
-            emit(.stateChanged(.finished))
+            guard let data = event.data else { return }
+            emitEndFile(UnsafePointer<mpv_event_end_file>(OpaquePointer(data)).pointee)
         case MPV_EVENT_PROPERTY_CHANGE:
             guard let data = event.data else { return }
             applyProperty(UnsafePointer<mpv_event_property>(OpaquePointer(data)).pointee)
         default:
             break
         }
+    }
+
+    /// **必须按 `reason` 分派。** 无条件报 `.finished` 会让坏文件永远进不了 `.failed` ——
+    /// `PlayerState.failed` 于是成为死代码，UI 无从区分「放完了」和「放失败了」。
+    /// 注意 `MPV_END_FILE_REASON_EOF` **不是**成功信号：不完整的文件与断掉的网络流也可能报它。
+    private func emitEndFile(_ endFile: mpv_event_end_file) {
+        guard let reason = PlaybackEndReason(mpvReason: endFile.reason),
+              let newState = reason.resultingState
+        else { return }
+        emit(.stateChanged(newState))
     }
 
     private func applyProperty(_ property: mpv_event_property) {
