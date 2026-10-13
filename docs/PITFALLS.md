@@ -945,6 +945,32 @@ mpv 文档正好点明 `eof-reached` **只在用 `--keep-open` 时才有意义**
 
 ---
 
+## P-040 · `print` 到管道是**块缓冲**：进程一被 terminate，输出连同缓冲一起消失
+
+**现象**：给 Demo 加了 `-traceUpdates`（把每条更新 `print` 出去），用
+`xcrun simctl launch --console … -traceUpdates > /tmp/log` 抓取；
+**`[trace]` 一行都没有**。而同一份代码在应用里明明生效了（截图里状态、画面尺寸都在变）。
+
+**根因**：`print` 写的是 **stdout，连到管道时是块缓冲**（4 KB 级）。
+排查端到端免不了 `simctl terminate` —— 进程被收掉时缓冲**从未 flush**，
+于是"日志里什么都没有"，看起来像"这段代码没执行"。
+
+**判据**：**"没有输出"不能推出"没有执行"**（与 `P-014` 同源）。
+这条在本机早有记录（沙箱化进程启动阶段被杀 → 一行输出都没有），这次换了个触发方式又踩到。
+
+**处置**：诊断输出走 **无缓冲** 的 `FileHandle.standardError.write(...)`：
+
+```swift
+FileHandle.standardError.write(Data("[trace] \(update)\n".utf8))
+```
+
+（stderr 默认无缓冲；若坚持用 stdout，就得每行 `fflush(stdout)`。）
+
+**防再犯**：**任何"要被工具抓取"的诊断输出，一律无缓冲直写**。
+判据问法：**「进程被杀的那一刻，我这条日志还在缓冲里吗？」**
+
+---
+
 > ### 与既有条目同源、故不重复展开的（仅登记映射，便于日后合并检索）
 >
 > | 其他项目的条目 | 本项目已有 |

@@ -8,7 +8,7 @@
 | --- | --- |
 | M0 路线成立 | ✅ 已产出**自建动态 LGPL-2.1 libmpv 产物**，模拟器与真机（iPhone 16 Pro）双通出画面 |
 | M1 地基可测 | ✅ 内核边界已立（`PlayerKernelProtocol` / 注册表 / `FakeKernel` / 状态机 / 时间模型）· **84 tests 全绿** · 变异 **27/27** 杀死 · `PlayerCore` 零 UI 依赖 |
-| M2 能看片 | ⬅ **进行中**（Phase 2：`MPVKernel` 生命周期 + 事件循环 ✓ · `wid` 视频表面 ✓ · **装配层 `PlayerController` ✓** · 下一步真画面） |
+| M2 能看片 | **◑ 基本达成**：模拟器上**真出画 + 播完报 `.finished` + `seek` 精确**（[`docs/10`](docs/10-P2验证报告.md)）· ⚠️ **出声未覆盖**（样例无音轨） |
 
 门禁：`./Tools/gate.sh`（退出码 0 = `G1` 达成）。
 
@@ -41,7 +41,7 @@ Demo/                    ← app shell（project.yml → xcodegen 生成，产�
 ```
 
 ```bash
-./Tools/gate.sh                        # 判定门（6 步）：零 UI import + 根包 build/test + MPV 包编译 + **MPV 行为测试** + 变异
+./Tools/gate.sh                        # 判定门（7 步）：零 UI import + 根包 build/test + MPV 包编译 + MPV 行为测试 + **G2 端到端真跑** + 变异
                                         #   第 4 步在 MPV 产物未 stage 时会 SKIP 并**显式声明未覆盖 MPVKernel 编译**（见 P-034）
 swift build && swift test              # 只跑根包（⚠️ 受限 shell 需加 --disable-sandbox，gate.sh 会自动判断）
 python3 Tools/mutation_check.py        # 只跑变异闸门（--restore 可还原被就地改动的源文件）
@@ -129,11 +129,11 @@ playerlearning/
 | `P2-T6` | `END_FILE` 区分错误 → `.failed`（附：`PlaybackEndReason` 策略入 Core；**并反转状态机四条边**，见 `docs/03` 📌） | ✅ |
 | `P2-T7` | `attach` 时序收口（`init` 参数化）+ wakeup 回调改 `passRetained` | ✅ |
 | `P2-T8` | 播放控制 + `seek` 用 `absolute+exact`（钳制归装配层） | ✅（实测抓出两处真缺陷：换文件回不到 `.playing`、播完 `.finished` 是死状态） |
-| `P2-T10` | Demo 接入 `PlayerMPV` 包（端到端硬前置） | ⬅ **下一步** |
+| `P2-T10` | Demo 接入 `PlayerMPV` 包（端到端硬前置） | ✅（端到端样板 + `-autoLoadSample` / `-traceUpdates` 两个可脚本化开关） |
 | `P2-T9` | `MPV/` 包纳入门禁（test target + `gate.sh` 条件步骤） | ✅（`gate.sh` 扩为 **6 步**：编译 + **真实 libmpv 行为测试**） |
-| `P2-T10` | Demo 接入 `PlayerMPV` 包（端到端硬前置） | ⬅ **下一步** |
+| `P2-T10` | Demo 接入 `PlayerMPV` 包（端到端硬前置） | ✅（端到端样板 + `-autoLoadSample` / `-traceUpdates` 两个可脚本化开关） |
 | `P2-T10` | Demo 接入 `PlayerMPV` 包（端到端硬前置） | 待开始 |
-| `P2-T11` | 端到端 + 性能基线 + `docs/10` + `G2` 固化 | 待开始 |
+| `P2-T11` | 端到端 + 性能基线 + [`docs/10`](docs/10-P2验证报告.md) + `G2` 固化 | ✅（**`G2` 达成**：出画 · seek 精确 · 门禁 0；**出声未覆盖**，见 `docs/10` §四。首屏 60 ms · 1.02x 实时 · 缓冲 0 · 峰值 49.1 MB） |
 
 **可直接复用的既有成果**：产物接入方式与已验证配置见 [`docs/06`](docs/06-P0-T5a技术验证报告.md) / [`docs/07`](docs/07-P0-T5b验证报告.md)；`spike/p0-t5b-lgpl-dynamic-build/verify/` 就是一份能跑通的接线样板。
 
