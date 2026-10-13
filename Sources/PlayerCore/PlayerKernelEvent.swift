@@ -1,0 +1,6 @@
+public enum PlayerKernelEvent: Sendable, Equatable {
+    case stateChanged(PlayerState)
+    case currentTimeChanged(Double)
+    case durationChanged(Double)
+    case bufferingChanged(Bool)
+}

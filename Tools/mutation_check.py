@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+import pathlib
+import shutil
+import signal
+import subprocess
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+BACKUP = ROOT / ".mutation-backup"
+TEST_TIMEOUT = 180
+
+MUTATIONS = [
+    ("Sources/PlayerCore/PlayerKernelRegistry.swift",
+     "kernelTypes.count > 1 ? kernelTypes[1] : nil",
+     "kernelTypes.count > 0 ? kernelTypes[1] : nil",
+     "registry: 越界守卫 count > 1 放宽为 > 0"),
+    ("Sources/PlayerCore/PlayerKernelRegistry.swift",
+     "kernelTypes.count > 1 ? kernelTypes[1] : nil",
+     "kernelTypes.count > 2 ? kernelTypes[1] : nil",
+     "registry: 越界守卫 count > 1 收紧为 > 2"),
+    ("Sources/PlayerCore/PlayerKernelRegistry.swift",
+     "kernelTypes.first",
+     "kernelTypes.last",
+     "registry: firstKernelType 取 last"),
+    ("Sources/PlayerCore/FakeKernel.swift",
+     "currentTime = seconds",
+     "currentTime = seconds + 1",
+     "fake: currentTime 偏移 +1"),
+    ("Sources/PlayerCore/FakeKernel.swift",
+     "emit(.durationChanged(scriptedDuration))",
+     "emit(.durationChanged(scriptedDuration + 1))",
+     "fake: load 上报时长 +1"),
+    ("Sources/PlayerCore/FakeKernel.swift",
+     "playCallCount += 1",
+     "playCallCount += 2",
+     "fake: playCallCount 步进 +2"),
+    ("Sources/PlayerCore/FakeKernel.swift",
+     "emit(.stateChanged(.idle))",
+     "emit(.stateChanged(.paused))",
+     "fake: stop 误报 .paused"),
+    ("Sources/PlayerCore/FakeKernel.swift",
+     "emit(.stateChanged(.readyToPlay))",
+     "",
+     "fake: load 不再上报 .readyToPlay"),
+    ("Sources/PlayerCore/FakeKernel.swift",
+     "seekRequests.append(seconds)",
+     "seekRequests.append(seconds + 1)",
+     "fake: seek 记录偏移 +1"),
+]
+
+
+def restore() -> None:
+    if not BACKUP.is_dir():
+        return
+    for copy in BACKUP.rglob("*"):
+        if not copy.is_file():
+            continue
+        target = ROOT / copy.relative_to(BACKUP)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(copy, target)
+    shutil.rmtree(BACKUP, ignore_errors=True)
+
+
+def guard(_signum, _frame) -> None:
+    print("\n收到中断信号，正在还原源文件…", flush=True)
+    restore()
+    sys.exit(130)
+
+
+def snapshot() -> None:
+    BACKUP.mkdir(exist_ok=True)
+    for relative in {relative for relative, *_ in MUTATIONS}:
+        target = BACKUP / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, target)
+
+
+def run_suite() -> str:
+    try:
+        result = subprocess.run(
+            ["swift", "test"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=TEST_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return "timeout"
+    output = result.stdout + result.stderr
+    if result.returncode == 0 and "error:" not in output:
+        return "green"
+    return "red"
+
+
+def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--restore":
+        restore()
+        print("已从备份还原")
+        return 0
+
+    if BACKUP.is_dir():
+        print("发现上次运行残留的备份，先还原", flush=True)
+        restore()
+
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, guard)
+
+    snapshot()
+    try:
+        if run_suite() != "green":
+            print("基线异常：变异前套件就不是绿的，终止", flush=True)
+            return 1
+
+        killed: list[str] = []
+        survived: list[str] = []
+        timed_out: list[str] = []
+
+        for relative, old, new, label in MUTATIONS:
+            path = ROOT / relative
+            text = path.read_text()
+            if text.count(old) != 1:
+                print(f"  跳过（匹配数 {text.count(old)} ≠ 1）  {label}", flush=True)
+                survived.append(label)
+                continue
+            path.write_text(text.replace(old, new))
+            verdict = run_suite()
+            shutil.copyfile(BACKUP / relative, path)
+            if verdict == "red":
+                print(f"  KILLED    {label}", flush=True)
+                killed.append(label)
+            elif verdict == "green":
+                print(f"  SURVIVED  {label}", flush=True)
+                survived.append(label)
+            else:
+                print(f"  TIMEOUT   {label}", flush=True)
+                timed_out.append(label)
+    finally:
+        restore()
+
+    print(flush=True)
+    print(
+        f"变异体 {len(MUTATIONS)} · 杀死 {len(killed)} · 存活 {len(survived)} · 超时 {len(timed_out)}",
+        flush=True,
+    )
+    if survived:
+        print("存活清单：", flush=True)
+        for label in survived:
+            print(f"  - {label}", flush=True)
+    if timed_out:
+        print("超时清单（套件疑似会挂死，属测试设计问题）：", flush=True)
+        for label in timed_out:
+            print(f"  - {label}", flush=True)
+    return 1 if survived or timed_out else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
