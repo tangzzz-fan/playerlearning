@@ -6,4 +6,5 @@ public enum PlayerKernelEvent: Sendable, Equatable {
     case durationChanged(Double)
     case bufferingChanged(Bool)
     case videoSizeChanged(CGSize)
+    case audioChanged(PlayerAudioState)
 }

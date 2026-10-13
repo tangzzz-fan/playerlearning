@@ -60,6 +60,7 @@ public actor MPVKernel: PlayerKernelProtocol {
     private var isBuffering = false
     private var naturalSize: CGSize = .zero
     private var videoSizeTracker = VideoSizeTracker()
+    private var audio = PlayerAudioState()
 
     /// 注册表用的**无参**构造（`PlayerKernelProtocol` 要求）—— 等价于**无画面**。
     ///
@@ -95,7 +96,8 @@ public actor MPVKernel: PlayerKernelProtocol {
             currentTime: currentTime,
             duration: duration,
             isBuffering: isBuffering,
-            naturalSize: naturalSize
+            naturalSize: naturalSize,
+            audio: audio
         )
     }
 
@@ -207,6 +209,11 @@ public actor MPVKernel: PlayerKernelProtocol {
         //    （实测：播完 15 秒内一条 `.finished` 都没有）⇒ `.finished` 会变成不可达状态。
         //    mpv 的文档也点明 `eof-reached` 只在用 `--keep-open` 时才有意义 —— 两者正好配对。
         _ = mpv_observe_property(handle, 0, "eof-reached", MPV_FORMAT_FLAG)
+        // 音频链路：**解码端**与**输出端**分开观察 ——
+        // "有音轨在解码"（audio-params）与"音频输出已建立"（audio-out-params）是两件事，
+        // 只有后者才意味着声音真的进了输出设备。`G2` 的"出声"一项就靠它拿证据。
+        _ = mpv_observe_property(handle, 0, "audio-params/samplerate", MPV_FORMAT_INT64)
+        _ = mpv_observe_property(handle, 0, "audio-out-params/samplerate", MPV_FORMAT_INT64)
     }
 
     private nonisolated func installWakeupCallback(_ handle: OpaquePointer, sink: WakeupSink) {
@@ -280,6 +287,16 @@ public actor MPVKernel: PlayerKernelProtocol {
             emit(.bufferingChanged(UnsafePointer<Int32>(OpaquePointer(data)).pointee != 0))
         case "pause":
             emit(.stateChanged(UnsafePointer<Int32>(OpaquePointer(data)).pointee != 0 ? .paused : .playing))
+        case "audio-params/samplerate":
+            let rate = Int(UnsafePointer<Int64>(OpaquePointer(data)).pointee)
+            if let next = audio.setDecoderSampleRate(rate) {
+                emit(.audioChanged(next))
+            }
+        case "audio-out-params/samplerate":
+            let rate = Int(UnsafePointer<Int64>(OpaquePointer(data)).pointee)
+            if let next = audio.setOutputSampleRate(rate) {
+                emit(.audioChanged(next))
+            }
         case "eof-reached":
             // 只在**变真**时上报：回复到 false（用户 seek 回去继续看）由 `pause` 那条边负责表达，
             // 这里不再多报一个状态，避免"退回去继续播"变成两次状态翻转。
@@ -317,6 +334,8 @@ public actor MPVKernel: PlayerKernelProtocol {
             isBuffering = flag
         case .videoSizeChanged(let size):
             naturalSize = size
+        case .audioChanged(let state):
+            audio = state
         }
     }
 

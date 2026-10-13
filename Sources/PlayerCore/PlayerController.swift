@@ -6,6 +6,7 @@ public actor PlayerController {
     private var time: PlayerTimeModel
     private var isBuffering = false
     private var naturalSize: CGSize = .zero
+    private var audio = PlayerAudioState()
     private var continuation: AsyncStream<PlayerControllerUpdate>.Continuation?
     private var pump: Task<Void, Never>?
 
@@ -39,7 +40,8 @@ public actor PlayerController {
             currentTime: time.currentTime,
             duration: time.duration,
             isBuffering: isBuffering,
-            naturalSize: naturalSize
+            naturalSize: naturalSize,
+            audio: audio
         )
     }
 
@@ -83,6 +85,10 @@ public actor PlayerController {
             guard size != naturalSize else { return }
             naturalSize = size
             continuation?.yield(.videoSizeChanged(size))
+        case .audioChanged(let state):
+            guard state != audio else { return }
+            audio = state
+            continuation?.yield(.audioChanged(state))
         }
     }
 

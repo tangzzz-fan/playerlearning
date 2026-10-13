@@ -198,9 +198,13 @@ else
     printf '%s\n' "$(grep -F '[trace]' /tmp/gate-g2-app.log | tail -15 || true)"
     fail '端到端未走到 .finished（日志 /tmp/gate-g2-app.log）'
   fi
-  # 三条都要有：播放过、画面尺寸到过、播完报过。
+  # 四条都要有：播放过、画面尺寸到过、**音频输出建立过**、播完报过。
+  # ⚠️ "出声"这条用 `audio-out-params/samplerate` 非零来判 —— 它是 API 层面能拿到的
+  #    最强证据（音频输出已建立）。**它不等于"扬声器响了"**（那要录音或人耳），
+  #    docs/10 §一 已把口径写清楚，不夸大。
   for marker in 'stateChanged(PlayerCore.PlayerState.playing)' \
                 'videoSizeChanged((640.0, 360.0))' \
+                'audioChanged(PlayerCore.PlayerAudioState(decoderSampleRate: 44100, outputSampleRate: 44100))' \
                 'stateChanged(PlayerCore.PlayerState.finished)'; do
     if ! grep -qF "$marker" /tmp/gate-g2-app.log; then
       printf '%s\n' "$(grep -F '[trace]' /tmp/gate-g2-app.log | tail -15 || true)"
@@ -209,7 +213,7 @@ else
   done
   firstFrame="$(grep -F '[trace]' /tmp/gate-g2-app.log \
     | grep -F 'videoSizeChanged' | head -1 | awk '{print $2}' || true)"
-  printf '  出画 + 播放 + 播完 均已上报（画面尺寸首次上报于 t=%s s）\n' "${firstFrame:-?}"
+  printf '  出画 + 出声（音频输出已建立）+ 播完 均已上报（画面尺寸首次上报于 t=%s s）\n' "${firstFrame:-?}"
   pass 'G2 端到端通过'
 fi
 

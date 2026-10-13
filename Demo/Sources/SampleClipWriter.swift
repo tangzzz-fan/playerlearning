@@ -19,20 +19,107 @@ enum SampleClipWriter {
         case pixelBufferUnavailable
         case contextUnavailable
         case encoderRejectedFrame(Int)
+        case muxFailed(String)
     }
+
+    /// 音轨参数 —— **必须真的可解码、能出声**，否则"出声"这一项就没有证据（`G2` 的最后一项）。
+    static let toneHz = 440.0
+    static let sampleRate = 44100.0
 
     /// 幂等：已存在就不重复生成。
     static func ensureClip() async throws -> URL {
         let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("sample-\(width)x\(height)-\(Int(duration))s.mp4")
+            .appendingPathComponent("sample-\(width)x\(height)-\(Int(duration))s-a.mp4")
         if FileManager.default.fileExists(atPath: url.path) {
             return url
         }
-        try await write(to: url)
+        try await makeClip(at: url)
         return url
     }
 
-    private static func write(to url: URL) async throws {
+    /// 视频 + 音频分头生成，再**封装**成交付文件。
+    ///
+    /// 为什么分两步而不是直接往 `AVAssetWriter` 里塞 `CMSampleBuffer`：
+    /// `AVAudioFile(forWriting:settings:)` 会**替我们做 AAC 编码与格式转换**，
+    /// 省掉手工拼 `CMSampleBuffer` / `CMBlockBuffer` / ASBD 那一大段（也就省掉那一类错）。
+    /// 视频轨走 `AVAssetWriter`（需要逐帧像素缓冲），音频轨走 `AVAudioFile`，最后 `AVMutableComposition`
+    /// **无损封装**（`Passthrough`，不重新编码）。
+    private static func makeClip(at output: URL) async throws {
+        let directory = FileManager.default.temporaryDirectory
+        let videoOnly = directory.appendingPathComponent(UUID().uuidString + "-v.mp4")
+        let audioOnly = directory.appendingPathComponent(UUID().uuidString + "-a.m4a")
+        defer {
+            try? FileManager.default.removeItem(at: videoOnly)
+            try? FileManager.default.removeItem(at: audioOnly)
+        }
+
+        try await writeVideo(to: videoOnly)
+        try writeAudio(to: audioOnly)
+        try await mux(video: videoOnly, audio: audioOnly, to: output)
+    }
+
+    private static func writeAudio(to url: URL) throws {
+        let file = try AVAudioFile(forWriting: url, settings: [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 96_000,
+        ])
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
+              let buffer = AVAudioPCMBuffer(
+                  pcmFormat: format,
+                  frameCapacity: AVAudioFrameCount(sampleRate * duration)
+              )
+        else {
+            throw Failure.contextUnavailable
+        }
+        buffer.frameLength = buffer.frameCapacity
+        if let samples = buffer.floatChannelData?[0] {
+            for frame in 0 ..< Int(buffer.frameLength) {
+                let seconds = Double(frame) / sampleRate
+                samples[frame] = Float(sin(2 * .pi * toneHz * seconds) * 0.2)
+            }
+        }
+        try file.write(from: buffer)
+    }
+
+    private static func mux(video: URL, audio: URL, to output: URL) async throws {
+        let composition = AVMutableComposition()
+        let videoAsset = AVURLAsset(url: video)
+        let audioAsset = AVURLAsset(url: audio)
+
+        guard let videoTrack = try await videoAsset.loadTracks(withMediaType: .video).first,
+              let audioTrack = try await audioAsset.loadTracks(withMediaType: .audio).first,
+              let composedVideo = composition.addMutableTrack(
+                  withMediaType: .video,
+                  preferredTrackID: kCMPersistentTrackID_Invalid
+              ),
+              let composedAudio = composition.addMutableTrack(
+                  withMediaType: .audio,
+                  preferredTrackID: kCMPersistentTrackID_Invalid
+              )
+        else {
+            throw Failure.muxFailed("拿不到视频轨或音频轨")
+        }
+
+        let span = CMTimeRange(
+            start: .zero,
+            duration: try await videoAsset.load(.duration)
+        )
+        try composedVideo.insertTimeRange(span, of: videoTrack, at: .zero)
+        try composedAudio.insertTimeRange(span, of: audioTrack, at: .zero)
+
+        guard let session = AVAssetExportSession(
+            asset: composition,
+            presetName: AVAssetExportPresetPassthrough
+        ) else {
+            throw Failure.muxFailed("拿不到导出会话")
+        }
+        try? FileManager.default.removeItem(at: output)
+        try await session.export(to: output, as: .mp4)
+    }
+
+    private static func writeVideo(to url: URL) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264,

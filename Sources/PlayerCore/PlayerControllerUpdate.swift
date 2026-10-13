@@ -5,4 +5,5 @@ public enum PlayerControllerUpdate: Sendable, Equatable {
     case timeChanged(PlayerTimeUpdate)
     case bufferingChanged(Bool)
     case videoSizeChanged(CGSize)
+    case audioChanged(PlayerAudioState)
 }

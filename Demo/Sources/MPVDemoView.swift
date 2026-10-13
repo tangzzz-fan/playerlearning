@@ -17,6 +17,7 @@ final class MPVDemoModel {
     private(set) var currentTime: Double = 0
     private(set) var duration: Double = 0
     private(set) var naturalSize: CGSize = .zero
+    private(set) var audio = PlayerAudioState()
     private(set) var isBuffering = false
     private(set) var statusText = "未开始"
     private(set) var isReady = false
@@ -110,6 +111,8 @@ final class MPVDemoModel {
             isBuffering = flag
         case .videoSizeChanged(let size):
             naturalSize = size
+        case .audioChanged(let state):
+            audio = state
         }
     }
 
@@ -146,6 +149,7 @@ struct MPVDemoView: View {
             row("状态", "\(model.state)")
             row("时间", String(format: "%.2f / %.2f s", model.currentTime, model.duration))
             row("画面", "\(Int(model.naturalSize.width))×\(Int(model.naturalSize.height))")
+            row("音频", "解码 \(model.audio.decoderSampleRate) Hz / 输出 \(model.audio.outputSampleRate) Hz")
             row("缓冲", model.isBuffering ? "是" : "否")
             row("说明", model.statusText)
         }

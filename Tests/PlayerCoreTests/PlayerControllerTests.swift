@@ -80,6 +80,31 @@ struct PlayerControllerTests {
     }
 
     @Test
+    func testAudioIsEmittedOnlyWhenItChanges() async throws {
+        var fixture = await makeFixture(duration: 60)
+
+        try await fixture.controller.load(fixture.resource)
+        var decoded = PlayerAudioState()
+        _ = decoded.setDecoderSampleRate(44100)
+        var outputting = decoded
+        _ = outputting.setOutputSampleRate(44100)
+        await fixture.kernel.emit(.audioChanged(decoded))
+        await fixture.kernel.emit(.audioChanged(decoded))
+        await fixture.kernel.emit(.audioChanged(outputting))
+
+        let updates = await fixture.updates()
+        let audioUpdates = updates.compactMap { update -> PlayerAudioState? in
+            if case let .audioChanged(state) = update { return state }
+            return nil
+        }
+
+        #expect(audioUpdates.count == 2, "同值重复不应上报，实际 \(audioUpdates.count) 条")
+        #expect(audioUpdates.last?.isOutputting == true)
+        let snapshot = await fixture.controller.snapshot()
+        #expect(snapshot.audio == outputting)
+    }
+
+    @Test
     func testSnapshotBeforeStartIsIdleAndEmpty() async {
         let controller = PlayerController(kernel: FakeKernel())
 
@@ -90,6 +115,7 @@ struct PlayerControllerTests {
         #expect(snapshot.duration == 0)
         #expect(!snapshot.isBuffering)
         #expect(snapshot.naturalSize == .zero)
+        #expect(snapshot.audio == PlayerAudioState())
     }
 
     @Test

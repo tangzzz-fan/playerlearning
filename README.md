@@ -8,7 +8,7 @@
 | --- | --- |
 | M0 路线成立 | ✅ 已产出**自建动态 LGPL-2.1 libmpv 产物**，模拟器与真机（iPhone 16 Pro）双通出画面 |
 | M1 地基可测 | ✅ 内核边界已立（`PlayerKernelProtocol` / 注册表 / `FakeKernel` / 状态机 / 时间模型）· **84 tests 全绿** · 变异 **27/27** 杀死 · `PlayerCore` 零 UI 依赖 |
-| M2 能看片 | **◑ 基本达成**：模拟器上**真出画 + 播完报 `.finished` + `seek` 精确**（[`docs/10`](docs/10-P2验证报告.md)）· ⚠️ **出声未覆盖**（样例无音轨） |
+| M2 能看片 | **✅ 达成**：模拟器上**出画 + 出声 + `seek` 精确 + 播完报 `.finished`**，且有端到端门禁守着（[`docs/10`](docs/10-P2验证报告.md)）· 下一步 `M3` |
 
 门禁：`./Tools/gate.sh`（退出码 0 = `G1` 达成）。
 
@@ -133,7 +133,8 @@ playerlearning/
 | `P2-T9` | `MPV/` 包纳入门禁（test target + `gate.sh` 条件步骤） | ✅（`gate.sh` 扩为 **6 步**：编译 + **真实 libmpv 行为测试**） |
 | `P2-T10` | Demo 接入 `PlayerMPV` 包（端到端硬前置） | ✅（端到端样板 + `-autoLoadSample` / `-traceUpdates` 两个可脚本化开关） |
 | `P2-T10` | Demo 接入 `PlayerMPV` 包（端到端硬前置） | 待开始 |
-| `P2-T11` | 端到端 + 性能基线 + [`docs/10`](docs/10-P2验证报告.md) + `G2` 固化 | ✅（**`G2` 达成**：出画 · seek 精确 · 门禁 0；**出声未覆盖**，见 `docs/10` §四。首屏 60 ms · 1.02x 实时 · 缓冲 0 · 峰值 49.1 MB） |
+| `P2-T11` | 端到端 + 性能基线 + [`docs/10`](docs/10-P2验证报告.md) + `G2` 固化 | ✅（出画 · seek 精确 · 门禁 0；首屏 60 ms · 1.02x 实时 · 缓冲 0 · 峰值 49.1 MB） |
+| `P2-T12` | **补音轨，关闭 `G2` 最后一项（出声）** | ✅（AAC 音轨 + `PlayerAudioState` 四层贯穿；实测音频输出建立。⚠️ 音轨使模拟器首屏 60 ms → 1.97 s，**待真机校准**，见 `docs/10` §二） |
 
 **可直接复用的既有成果**：产物接入方式与已验证配置见 [`docs/06`](docs/06-P0-T5a技术验证报告.md) / [`docs/07`](docs/07-P0-T5b验证报告.md)；`spike/p0-t5b-lgpl-dynamic-build/verify/` 就是一份能跑通的接线样板。
 

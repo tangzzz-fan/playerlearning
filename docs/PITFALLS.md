@@ -672,6 +672,11 @@ let update = model.apply(.currentTimeChanged(0.1))
 > 处置：写成**单个字符串字面量**（可含 `\(插值)`），或显式构造 `Comment(rawValue:)`。
 > 长消息想换行时，**别用 `+` 断行** —— 那会变成编译错误，而报错位置指向 `#expect` 而非拼接处。
 
+> **再追加（2026-10-13，`P2-T12`）**：⚠️ **同一天内第二次命中**，而且这次犯的正是本条目已经写着的那句
+> —— `let next = try #require(state.setDecoderSampleRate(44100))` 仍然是「在宏里调 `mutating`」。
+> ⇒ 说明「先赋局部量」这条**光记住不够，得变成手癖**：
+> **只要 `#expect` / `#require` 的表达式里出现 `set` / `mutate` / `apply` 这类动词，就先怀疑它**。
+
 **来源**：`Marquee` E32。
 
 ---

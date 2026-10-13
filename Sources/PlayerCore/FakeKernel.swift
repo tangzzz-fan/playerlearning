@@ -15,6 +15,7 @@ public actor FakeKernel: PlayerKernelProtocol {
     private var currentTime: Double = 0
     private var isBuffering = false
     private var naturalSize: CGSize = .zero
+    private var audio = PlayerAudioState()
     private var continuation: AsyncStream<PlayerKernelEvent>.Continuation?
 
     public init() {
@@ -80,7 +81,8 @@ public actor FakeKernel: PlayerKernelProtocol {
             currentTime: currentTime,
             duration: duration,
             isBuffering: isBuffering,
-            naturalSize: naturalSize
+            naturalSize: naturalSize,
+            audio: audio
         )
     }
 
@@ -101,6 +103,8 @@ public actor FakeKernel: PlayerKernelProtocol {
             isBuffering = flag
         case .videoSizeChanged(let size):
             naturalSize = size
+        case .audioChanged(let state):
+            audio = state
         }
     }
 }
