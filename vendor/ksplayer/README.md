@@ -1,0 +1,314 @@
+![Build Status](https://img.shields.io/badge/build-%20passing%20-blue.svg)
+![Platform](https://img.shields.io/badge/Platform-%20iOS%20macOS%20tvOS%20visionOS%20-blue.svg)
+![License](https://img.shields.io/badge/license-GPL-blue.svg)
+# KSPlayer
+
+KSPlayer is a powerful media play framework for iOS, macCatalyst, macOS, tvOS, xrOS, visionOS. based on AVPlayer and FFmpeg, support HLG、HDR10、 HDR10+、Dolby Vision、Dolby Atmos、Text/Image subtitle.
+
+English | [简体中文](./README_CN.md)
+
+## Communication
+
+If you have a commercial project that requires a custom player, or would like to receive a paid consultation, please email me.
+
+- Email : kingslay@icloud.com
+
+## License
+KSPlayer defaults to the GPL license (requires open-sourcing your own project code), and we hope everyone will consciously respect the licensing agreement of the KSPlayer project. Additionally, There is a paid version available under the LGPL license. You can check [this post](https://github.com/kingslay/KSPlayer/issues/731) for details on the licensing options or send me an email. If I don't reply to your email, feel free to @mention me in this post.
+
+If due to commercial reasons, you prefer not to adhere to the GPL license  or the LGPL license, you can contact us. Through our authorization, you can obtain a more flexible licensing agreement.
+
+## Features
+Differences between GPL version and LGPL version.
+| Module | GPL Version | LGPL Version |
+|---|---|---|
+| **KSPlayer** | Dynamic Binary, only macOS、iSimulator、tvOS | Source code, all Apple platforms |
+| **KSPlayerUI** | Source code, all Apple platforms | Source code, all Apple platforms |
+| **MPVPlayer** | Source code, all Apple platforms | Source code, all Apple platforms |
+
+### One-time Paid Features
+
+- Video upscaling
+- ProgressBar Preview
+- Precache data to Hard Drive
+- Video output to another screen
+- Video switching with zero delay
+- Audio Passthrough Output by Wi-Fi
+- Live streaming supports rewind viewing
+- Offline AI real-time subtitle generation
+- Simultaneous playback of separate audio and video URLs
+- Blu-ray disc (ISO, BDMV, DVD) playback on all Apple platforms
+- Play videos in a small window in the App (resumable, supports iOS and tvOS)
+- AVPlayer supports MKV
+- Native Dolby Atmos (E-AC-3)
+- Native Dolby Vision dynamic metadata (P5, P8)
+
+To experience the paid features, you can download the app from the App Store. [App Store Link](https://apps.apple.com/app/tracyplayer/id6450770064) [Test Flight Link](https://testflight.apple.com/join/eNmYbmZN)
+
+### Free Features
+
+- Dolby AC-4
+- Swift Concurrency
+- Hardware De-interlace
+- AV1 hardware decoding
+- Word-by-word subtitles
+- HDR10+ dynamic metadata
+- Text subtitle translation
+- Use System Caption Appearance
+- Record video clips at any time
+- Smoothly Play 8K or 120 FPS Video
+- Display Subtitles with HDR Effects
+- Video download and format conversion
+- External image subtitles, such as SUP
+- Main subtitles and Secondary subtitles
+- Offline AI real-time subtitle translation
+- Adjust Saturation, Brightness, and Contrast
+- Picture in Picture supports subtitle display
+- Annex-B async hardware decoding (Live Stream)
+- Use the fonts in the video to render subtitles
+- Use memory cache for fast seek in short time range
+- KSMEPlayer supports all demuxing and decoding formats
+- Full display of ASS subtitle effects (rendered as images using libass)
+- Record video
+- 4K / HDR / HDR10
+- 360° panorama video
+- Picture in Picture
+- Hardware accelerator
+- Automatic de-interlace detection
+- Multichannel Audio / Spatial Audio
+- Custom URL protocols such as NFS / SMB
+- Text subtitles / Image subtitles / Closed Captions
+- Seamless loop playback within a specific range
+- Search online subtitles (Shooter / ASSRT / OpenSubtitles)
+- Low-latency 4K live video streaming (less than 200 ms on LAN)
+- Automatically switch to multi-bitrate streams based on network conditions
+
+## Requirements
+
+- iOS 13+, macCatalyst 14+, macOS 10.15+, tvOS 13+, xrOS 1+
+
+## List of Apps Licensed to Use this SDK
+
+This table does not list all licensed apps. If you would like to have your app listed above, please send me an email.
+| App Store Link | Logo |
+| -------------- | ---- |
+|[APTV](https://apps.apple.com/app/aptv/id1630403500)||
+|[homeTV IPTV Player](https://apps.apple.com/app/hometv-iptv-player/id1636701357)||
+|[Interlace Player](https://apps.apple.com/app/id6789244498)||
+|[IPTV +](https://apps.apple.com/app/iptv-my-smart-iptv-player/id1525121231)||
+|[LillyPlayer Video Player](https://apps.apple.com/app/lillyplayer-video-player/id1446967273)||
+|[MyKroko](https://apps.apple.com/cn/app/mykroko/id6758295863)||
+|[SeeTV]()||
+|[SenPlayer](https://apps.apple.com/app/senplayer-hdr-media-player/id6443975850)||
+|[Smart IPTV](https://apps.apple.com/app/smart-iptv-tv-and-movies-ott/id1492738910)||
+|[Snappier IPTV](https://apps.apple.com/app/snappier-iptv/id1579702567)||
+|[StreamX](https://apps.apple.com/us/app/streamx-iptv-player-m3u/id6755919340)||
+|[SWIPTV - IPTV Smart Player](https://apps.apple.com/app/swiptv-iptv-smart-player/id1658538188)||
+|[UHF - Love your IPTV](https://apps.apple.com/app/uhf-love-your-iptv/id6443751726)||
+|[Zen IPTV](https://apps.apple.com/fr/app/zen-iptv/id6458223193)||
+
+## Demo
+
+- Open Demo/Demo.xcworkspace with Xcode.
+
+## Quick Start
+
+### Swift Package Manager
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/kingslay/KSPlayer.git", .branch("main"))
+]
+```
+
+## Usage
+
+#### Initialization
+
+```swift
+import KSPlayer
+import KSPlayerUI
+
+KSOptions.secondPlayerType = KSMEPlayer.self
+playerView = IOSVideoPlayerView()
+view.addSubview(playerView)
+playerView.translatesAutoresizingMaskIntoConstraints = false
+NSLayoutConstraint.activate([
+    playerView.topAnchor.constraint(equalTo: view.readableContentGuide.topAnchor),
+    playerView.leftAnchor.constraint(equalTo: view.leftAnchor),
+    playerView.rightAnchor.constraint(equalTo: view.rightAnchor),
+    playerView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+])
+playerView.backBlock = { [unowned self] in
+    if UIApplication.shared.statusBarOrientation.isLandscape {
+        self.playerView.updateUI(isLandscape: false)
+    } else {
+        self.navigationController?.popViewController(animated: true)
+    }
+}
+```
+
+#### Setting up a regular video
+
+```swift
+import KSPlayer
+import KSPlayerUI
+
+playerView.set(url:URL(string: "http://baobab.wdjcdn.com/14525705791193.mp4")!)
+playerView.set(resource: KSPlayerResource(url: url, name: name!, cover: URL(string: "http://img.wdjimg.com/image/video/447f973848167ee5e44b67c8d4df9839_0_0.jpeg"), subtitleURL: URL(string: "http://example.ksplay.subtitle")))
+```
+
+#### Multi-definition, with cover video
+
+```swift
+import KSPlayer
+import KSPlayerUI
+
+let res0 = KSPlayerResourceDefinition(url: URL(string: "http://clips.vorwaerts-gmbh.de/big_buck_bunny.mp4")!,
+                                      definition: "高清")
+let res1 = KSPlayerResourceDefinition(url: URL(string: "http://clips.vorwaerts-gmbh.de/big_buck_bunny.mp4")!,
+                                      definition: "标清")
+
+let asset = KSPlayerResource(name: "Big Buck Bunny",
+                             definitions: [res0, res1],
+                             cover: URL(string: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Big_buck_bunny_poster_big.jpg/848px-Big_buck_bunny_poster_big.jpg"))
+playerView.set(resource: asset)
+```
+
+#### Setting up an HTTP header
+
+```swift
+import KSPlayer
+import KSPlayerUI
+
+let options = KSOptions()
+options.appendHeader(["Referer":"https:www.xxx.com"])
+let definition = KSPlayerResourceDefinition(url: URL(string: "http://clips.vorwaerts-gmbh.de/big_buck_bunny.mp4")!,
+                                            definition: "高清",
+                                            options: options)
+let asset = KSPlayerResource(name: "Video Name",
+                             definitions: [definition])
+playerView.set(resource: asset)
+```
+
+#### Listening status change
+
+```swift
+import KSPlayer
+import KSPlayerUI
+
+// Listen to play time change
+playerView.playTimeDidChange = { (currentTime: TimeInterval, totalTime: TimeInterval) in
+    print("playTimeDidChange currentTime: \(currentTime) totalTime: \(totalTime)")
+}
+
+// Delegates
+public protocol PlayerControllerDelegate: class {
+    func playerController(state: KSPlayerState)
+    func playerController(currentTime: TimeInterval, totalTime: TimeInterval)
+    func playerController(finish error: Error?)
+    func playerController(maskShow: Bool)
+    func playerController(action: PlayerButtonType)
+    // `bufferedCount: 0` indicates first time loading
+    func playerController(bufferedCount: Int, consumeTime: TimeInterval)
+}
+```
+
+## Advanced Usage
+
+### Inherits PlayerView's custom play logic and UI.
+
+```swift
+import KSPlayer
+import KSPlayerUI
+
+  class CustomVideoPlayerView: IOSVideoPlayerView {
+      override func updateUI(isLandscape: Bool) {
+          super.updateUI(isLandscape: isLandscape)
+          toolBar.playbackRateButton.isHidden = true
+      }
+
+      override func onButtonPressed(type: PlayerButtonType, button: UIButton) {
+          if type == .landscape {
+              // Your own button press behaviour here
+          } else {
+              super.onButtonPressed(type: type, button: button)
+          }
+      }
+  }
+```
+
+
+
+### Selecting Tracks
+
+```swift
+import KSPlayer
+import KSPlayerUI
+
+     override open func player(layer: KSPlayerLayer, state: KSPlayerState) {
+          super.player(layer: layer, state: state)
+          if state == .readyToPlay, let player = layer.player {
+              let tracks = player.tracks(mediaType: .audio)
+              let track = tracks[1]
+              /// the name of the track
+              let name = track.name
+              /// the language of the track
+              let language = track.language
+              /// selecting the one
+              player.select(track: track)
+          }
+     }
+```
+
+
+## Effect
+
+![gif](./Demo/demo.gif)
+
+## Developments and Tests
+
+Any contributing and pull requests are warmly welcome. However, before you plan to implement some features or try to fix an uncertain issue, it is recommended to open a discussion first. It would be appreciated if your pull requests could build and with all tests green. :)
+
+
+## Backers & Sponsors
+
+Open-source projects cannot live long without your help. If you find KSPlayer to be useful, please consider supporting this
+project by becoming a sponsor.
+
+Become a sponsor through [GitHub Sponsors](https://github.com/sponsors/kingslay/). :heart:
+
+Your user icon or company logo shows up this with a link to your home page.
+|Name| App name | App Logo |
+| ----------- | ----------- |----------- |
+|[UnknownCoder807](https://github.com/UnknownCoder807)|[Snappier](https://apps.apple.com/app/snappier-iptv/id1579702567)||
+|[skrew](https://github.com/skrew)||
+|[Kimentanm](https://github.com/Kimentanm)||
+|[nakiostudio](https://github.com/nakiostudio)|[UHF](https://apps.apple.com/app/uhf-love-your-iptv/id6443751726)||
+|[CodingByJerez](https://github.com/CodingByJerez)||
+|[andrefmsilva](https://github.com/andrefmsilva)||
+|[romaingyh](https://github.com/romaingyh)|[Zen IPTV](https://apps.apple.com/fr/app/zen-iptv/id6458223193)||
+|[archrainey ](https://github.com/archrainey)||
+|[nihalahmed](https://github.com/nihalahmed)||
+|[johnil](https://github.com/johnil)||
+|[MeloDreek](https://github.com/MeloDreek)||
+|[nsplay1990](https://github.com/nsplay1990)||
+|[AppleChillVibez](https://github.com/AppleChillVibez)||
+|[bmob222](https://github.com/bmob222)||
+|[pateltejas](https://github.com/pateltejas)||
+|[ewanl2001](https://github.com/ewanl2001)||
+|[JulienDev](https://github.com/JulienDev)||
+|[Sheinices](https://github.com/Sheinices)||
+|[Etheirystech](https://github.com/Etheirystech)||
+|[loicleser](https://github.com/loicleser)||
+
+
+Thanks to [nightfall708](https://github.com/nightfall708) for sponsoring a mac mini
+
+Thanks to [cdguy](https://github.com/cdguy) [UnknownCoder807](https://github.com/UnknownCoder807) [skrew](https://github.com/skrew) and LillyPlayer community for sponsoring a LG S95QR Sound Bar
+
+Thanks to [skrew](https://github.com/skrew) and LillyPlayer community for sponsoring a 2022 Apple TV 4K
+
+Thanks to [bgoncal](https://github.com/bgoncal) for sponsoring a HomePod mini
+
+![1](./Documents/Sponsors.jpg)

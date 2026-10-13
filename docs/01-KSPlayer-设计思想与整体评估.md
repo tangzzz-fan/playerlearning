@@ -2,7 +2,8 @@
 
 > **评估对象**：`git@github.com:kingslay/KSPlayer.git`
 > **快照**：branch `main` · HEAD `01dba13`（2026-10-10）· `git describe = 2.3.4-71-g01dba13` · 849 commits · 最新 tag `2.3.4`
-> **本地 clone**：`/Users/tango/Developments/KSPlayer`
+> **参考代码位置**：`vendor/ksplayer/`（只读学习副本，来源与剔除说明见 `vendor/ksplayer/NOTICE.md`）
+> **引用行号说明**：本文提到的 `.swiftinterface` 行号来自上述快照的 `KSPlayer.xcframework`；该二进制未纳入 vendor（体积 99 M 且闭源），如需复核请按 `NOTICE.md` 末尾的命令另做完整 clone。
 > **评估日期**：2026-10-13
 >
 > 本文中所有数字与引文都来自该快照的实测（`git` 命令、源码、`.swiftinterface`、issue #811），非推测。标注「需复核」的项表示上游滚动分支可能已变更。
