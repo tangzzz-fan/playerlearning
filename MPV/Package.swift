@@ -18,6 +18,14 @@ let package = Package(
                 .target(name: "Libmpv", condition: .when(platforms: [.iOS]))
             ]
         ),
+        .testTarget(
+            name: "PlayerMPVTests",
+            dependencies: [
+                "PlayerMPV",
+                .product(name: "PlayerCore", package: "PlayerStack"),
+            ],
+            path: "Tests/PlayerMPVTests"
+        ),
         .binaryTarget(name: "Libmpv", path: "Library/Libmpv.xcframework")
     ],
     swiftLanguageModes: [.v6]

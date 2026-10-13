@@ -41,7 +41,7 @@ Demo/                    ← app shell（project.yml → xcodegen 生成，产�
 ```
 
 ```bash
-./Tools/gate.sh                        # 判定门：零 UI import + 根包 build/test + **MPV 包构建** + 变异（退出 0 即通过）
+./Tools/gate.sh                        # 判定门（6 步）：零 UI import + 根包 build/test + MPV 包编译 + **MPV 行为测试** + 变异
                                         #   第 4 步在 MPV 产物未 stage 时会 SKIP 并**显式声明未覆盖 MPVKernel 编译**（见 P-034）
 swift build && swift test              # 只跑根包（⚠️ 受限 shell 需加 --disable-sandbox，gate.sh 会自动判断）
 python3 Tools/mutation_check.py        # 只跑变异闸门（--restore 可还原被就地改动的源文件）
@@ -129,7 +129,7 @@ playerlearning/
 | `P2-T6` | `END_FILE` 区分错误 → `.failed`（附：`PlaybackEndReason` 策略入 Core；**并反转状态机四条边**，见 `docs/03` 📌） | ✅ |
 | `P2-T7` | `attach` 时序收口（`init` 参数化）+ wakeup 回调改 `passRetained` | ✅ |
 | `P2-T8` | 播放控制 + `seek` 用 `absolute+exact`（钳制归装配层） | ⬅ **下一步** |
-| `P2-T9` | `MPV/` 包纳入门禁（test target + `gate.sh` 条件步骤） | 🔸 半程（`gate.sh` 的 MPV 构建步骤已加；test target 待补） |
+| `P2-T9` | `MPV/` 包纳入门禁（test target + `gate.sh` 条件步骤） | ✅（`gate.sh` 扩为 **6 步**：编译 + **真实 libmpv 行为测试**） |
 | `P2-T10` | Demo 接入 `PlayerMPV` 包（端到端硬前置） | 待开始 |
 | `P2-T11` | 端到端 + 性能基线 + `docs/10` + `G2` 固化 | 待开始 |
 

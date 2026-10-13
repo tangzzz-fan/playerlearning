@@ -7,6 +7,32 @@ cd "$ROOT"
 pass() { printf '  ✓ %s\n' "$1"; }
 fail() { printf '  ✗ %s\n' "$1"; exit 1; }
 
+# 挑一个可用的 iPhone 模拟器 —— **不写死机型**（`P-030` 家族：写死设备名会在换机/升级后静默失效）。
+# 优先已启动的（省一次冷启动），否则取最新 runtime 的第一个可用 iPhone。
+pick_simulator() {
+  python3 - <<'PY' || return 1
+import json
+import subprocess
+import sys
+
+listing = subprocess.run(
+    ["xcrun", "simctl", "list", "devices", "available", "-j"],
+    capture_output=True, text=True, check=True,
+).stdout
+devices = json.loads(listing)["devices"]
+ordered = [d for _, group in sorted(devices.items(), reverse=True) for d in group]
+iphones = [d for d in ordered if d.get("isAvailable") and "iPhone" in d.get("name", "")]
+for device in iphones:
+    if device.get("state") == "Booted":
+        print(device["udid"])
+        sys.exit(0)
+for device in iphones:
+    print(device["udid"])
+    sys.exit(0)
+sys.exit(1)
+PY
+}
+
 # 受限 shell 里 macOS 不允许再 apply 一层 deny-default 沙箱 ⇒ SwiftPM 的清单/插件沙箱会被拒，
 # 报 sandbox_apply: Operation not permitted。按需补逃逸参数（只加在命令行，绝不写进工程文件）。
 if sandbox-exec -p '(version 1)(deny default)(allow file-read*)' /bin/echo ok >/dev/null 2>&1; then
@@ -21,13 +47,13 @@ fi
 printf '═══ 判定门（G1 + Phase 2 增量）═══\n'
 printf '依据 docs/03 §三 · docs/09 §四 D-a\n\n'
 
-printf '[1/5] PlayerCore 零 UI 框架 import\n'
+printf '[1/6] PlayerCore 零 UI 框架 import\n'
 if grep -rE 'import (SwiftUI|UIKit|AppKit)' Sources/PlayerCore/; then
   fail 'PlayerCore 出现 UI 框架 import（违反 docs/02 施工约束 1）'
 fi
 pass 'PlayerCore 内无 SwiftUI / UIKit / AppKit'
 
-printf '\n[2/5] 根包 swift build\n'
+printf '\n[2/6] 根包 swift build\n'
 if ! swift build "${SWIFT_ESCAPE[@]+"${SWIFT_ESCAPE[@]}"}" > /tmp/gate-build.log 2>&1; then
   # 失败分支**必须给出东西**：匹配不到已知签名时回退打日志末尾（见 P-027）。
   excerpt="$(grep -E 'error:|BUILD FAILED|sandbox_apply' /tmp/gate-build.log | head -30 || true)"
@@ -37,7 +63,7 @@ if ! swift build "${SWIFT_ESCAPE[@]+"${SWIFT_ESCAPE[@]}"}" > /tmp/gate-build.log
 fi
 pass '构建通过'
 
-printf '\n[3/5] 根包 swift test\n'
+printf '\n[3/6] 根包 swift test\n'
 if ! swift test "${SWIFT_ESCAPE[@]+"${SWIFT_ESCAPE[@]}"}" > /tmp/gate-test.log 2>&1; then
   # ⚠️ 两个坑一起防：
   #   1. `grep … | head` 无匹配时退出码非 0，在 `set -e` 下会让**脚本先死掉**，fail 那句根本轮不到；
@@ -67,7 +93,7 @@ if [ "${failedRuns:-0}" -ne 0 ]; then
 fi
 pass '测试全绿'
 
-printf '\n[4/5] MPV 包构建（libmpv 适配器）\n'
+printf '\n[4/6] MPV 包构建（libmpv 适配器）\n'
 # ⚠️ 为什么必须有这一步：`MPV/` 是**独立包**，根包的 build/test 完全看不到它。
 # `P2-T4` 给 PlayerKernelEvent 加了 `.videoSizeChanged`，把 `MPVKernel` 的 switch 打破成非穷尽 ——
 # 根包门禁全绿，**这个编译破坏却一直没被任何信号发现**，直到本机终于有了产物（见 P-034）。
@@ -89,7 +115,41 @@ else
   pass 'MPV 包构建通过'
 fi
 
-printf '\n[5/5] 变异测试\n'
+printf '\n[5/6] MPV 包测试（真实 libmpv，iOS 模拟器）\n'
+# ⚠️ 这一步是 `P2-T9` 的剩余一半，也是 `P-034` 的真正解法：
+#    只有"跑"起来才能验证 `/MPVKernel` 的**行为**，而不只是"能编译"。
+#    测试会在模拟器里拉起真实 mpv 实例，素材由 `TestClip` 用 AVAssetWriter **现场生成**
+#    （确定性、零网络、不往仓库塞二进制 —— `P-033`）。
+# ⚠️ 与 [4/6] 同样"存在才跑"：产物不在就没有可测的东西，跳过但**必须说清后果**。
+if [ ! -d "$ROOT/MPV/Library/Libmpv.xcframework" ]; then
+  printf '  SKIP —— 产物未 stage（与 [4/6] 同因）\n'
+  printf '  ⚠️ 本次**未运行** MPVKernel 的行为测试\n'
+elif ! SIM_UDID="$(pick_simulator)"; then
+  printf '  SKIP —— 找不到可用的 iPhone 模拟器\n'
+  printf '  ⚠️ 本次**未运行** MPVKernel 的行为测试（只有 [4/6] 的编译检查）\n'
+else
+  if ! (cd "$ROOT/MPV" && xcodebuild -scheme PlayerMPV \
+        -destination "platform=iOS Simulator,id=$SIM_UDID" \
+        -derivedDataPath DD-Test \
+        "${XCB_ESCAPE[@]+"${XCB_ESCAPE[@]}"}" test) > /tmp/gate-mpvtest.log 2>&1; then
+    excerpt="$(grep -E 'error:|✘|Expectation failed|recorded an issue|TEST FAILED' /tmp/gate-mpvtest.log | head -30 || true)"
+    [ -n "$excerpt" ] || excerpt="$(tail -20 /tmp/gate-mpvtest.log)"
+    printf '%s\n' "$excerpt"
+    fail 'MPV 包测试失败（日志 /tmp/gate-mpvtest.log）'
+  fi
+  # 同 [3/6] 的纪律：**取不到汇总行就是失败**，不能打印空计数还判绿（`P-023`）。
+  # ⚠️ 这里**整行取回**而不是 `-o` 截片段：`[^.]*` 会在 "passed after 7.123 seconds" 的
+  #    小数点处断掉，打出 "after 7" 这种残句（把签名卡太死的典型后果，见 `P-027`）。
+  mpvSummary="$(grep -E 'Test run with [0-9]+ tests?' /tmp/gate-mpvtest.log | tail -1 || true)"
+  if [ -z "$mpvSummary" ]; then
+    tail -20 /tmp/gate-mpvtest.log
+    fail 'MPV 包未产出测试汇总行 —— 测试可能根本没执行（P-023）'
+  fi
+  printf '  %s\n' "$mpvSummary"
+  pass 'MPV 包测试全绿'
+fi
+
+printf '\n[6/6] 变异测试\n'
 if ! python3 Tools/mutation_check.py; then
   fail '存在存活或超时的变异体'
 fi

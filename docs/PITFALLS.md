@@ -850,6 +850,39 @@ grep -c   "规则反转"        "docs/03-路线图.md"      # → 0   （工作�
 
 ---
 
+## P-037 · SwiftPM 包的测试入口：**没有 `<包名>-Package` scheme**，直接用产品 scheme
+
+**现象**：给 `MPV/` 加了 `.testTarget` 之后，`xcodebuild -list` 里**仍然只有一个 scheme**（`PlayerMPV`），
+没有常见的 `PlayerMPV-Package`。按经验去试 `-scheme PlayerMPV-Package` ⇒
+
+```
+xcodebuild: error: The workspace named "PlayerMPV" does not contain a scheme named "PlayerMPV-Package".
+```
+
+**根因**：在**包目录**里跑 `xcodebuild` 时，Xcode 建的是一个**隐式 workspace**，只按 *product* 建 scheme；
+`<包名>-Package` 那个 scheme 是 **Xcode app 里打开包**时才生成的，CLI 路径下不存在。
+
+**处置**：**直接用产品 scheme 跑 `test`** —— 加了 `testTarget` 之后它会自动带上测试：
+
+```bash
+cd MPV
+xcodebuild -scheme PlayerMPV \
+  -destination 'platform=iOS Simulator,id=<UDID>' \
+  -derivedDataPath DD-Test test
+```
+
+**另外两条同批踩到的**：
+
+| 子坑 | 现象 | 处置 |
+| --- | --- | --- |
+| **别写死模拟器机型** | `-destination 'platform=iOS Simulator,name=iPhone 18 Pro'` 会在换机/升级后失效 | `xcrun simctl list devices available -j` 里**动态挑**可用 iPhone（优先 `state == "Booted"`）。已落成 `gate.sh` 的 `pick_simulator()` |
+| **汇总行别用 `[^.]*` 截片段** | 想提取 `Test run with 7 tests in 1 suite passed after 7.057 seconds.`，写 `-Eo '…tests?[^.]*'` 会在 `7.057` 的小数点处断掉，打印出 `after 7` 残句 | **整行取回**（`grep -E … \| tail -1`），别用 `-o` 截。这是"把签名卡太死"的典型后果（`P-027` 同族） |
+
+> `-derivedDataPath` 必须给，且要进 `.gitignore`：`MPV/DD-Test/` 有 **149 MB**。
+> 本轮把忽略规则由 `MPV/DD-iOS/` 放宽成 **`MPV/DD-*/`** —— 否则下次换个名字又漏。
+
+---
+
 > ### 与既有条目同源、故不重复展开的（仅登记映射，便于日后合并检索）
 >
 > | 其他项目的条目 | 本项目已有 |

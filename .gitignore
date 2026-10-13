@@ -16,7 +16,7 @@ Demo/DD/
 
 MPV/Library/*.xcframework/
 MPV/.build/
-MPV/DD-iOS/
+MPV/DD-*/
 spike/**/*.xcodeproj/
 spike/**/Info.plist
 spike/**/Resources/
