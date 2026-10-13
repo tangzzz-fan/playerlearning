@@ -666,6 +666,12 @@ let update = model.apply(.currentTimeChanged(0.1))
 > 这与 `P-025` 是同一棵树的两根枝：**`#expect` 的宏展开会改变表达式的求值/类型环境**
 > —— 一个是 `mutating`，一个是存在元类型。
 
+> **追加（2026-10-13，`P2-T6` 实测）**：`#expect` 的第二个参数类型是 **`Comment?`，不是 `String`**
+> ⇒ **不接受字符串拼接**：`#expect(x, "第一句" + "第二句")` 报
+> `cannot convert value of type 'String' to expected argument type 'Comment?'`。
+> 处置：写成**单个字符串字面量**（可含 `\(插值)`），或显式构造 `Comment(rawValue:)`。
+> 长消息想换行时，**别用 `+` 断行** —— 那会变成编译错误，而报错位置指向 `#expect` 而非拼接处。
+
 **来源**：`Marquee` E32。
 
 ---
@@ -766,6 +772,47 @@ MPVKernel.swift:199:9: error: switch must be exhaustive
 
 > 与 `P-018`（单元测试全绿 ≠ 部件能组合）是同一族，但更早一步：**那条是"跑了但没测到组合"，
 > 这条是"根本没跑"**。**没被执行的检查，比失败的检查更危险 —— 因为它返回的是绿。**
+
+---
+
+---
+
+## P-035 · ⚠️ 装配层对"被拒事件"的 `return`，会把**失败**变成**静默**
+
+**现象**：`P2-T6` 要让 `MPV_EVENT_END_FILE` 的错误走到 `.failed`。按票面只需改 `MPVKernel`，
+但复核发现：即便内核 `emit(.stateChanged(.failed))`，**`PlayerController` 的更新流里一条都没有** ——
+UI 永远停在原状态，**且没有任何报错、没有任何日志**。
+
+**根因**：装配层是「先过状态机，只上报 `.applied`」：
+
+```swift
+case .stateChanged(let newState):
+    guard machine.transition(to: newState) == .applied else { return }
+    continuation?.yield(.stateChanged(newState))
+```
+
+而 `PlayerStateMachine` 当时把四条边**明确列为非法**（`PlayerStateMachineTests.swift` L33/L39/L42/L45 有断言守着）：
+`.idle → .failed` · `.readyToPlay → .failed` · `.paused → .failed` · `.finished → .failed`。
+于是三条真实路径全部被 `return` 吞掉：
+① 容器解析成功（`.readyToPlay`）之后解码才失败；② 暂停中网络流断掉（`.paused`）；
+③ `mpv_create` / `mpv_initialize` 失败时状态还是 `.idle`。
+
+**判据**：**状态机的"拒绝"语义对「非法迁移」成立，对「事实回执」不成立。**
+`.failed` 不是"有人做了不该做的操作"（那才该拒），而是"内核观察到的事实"。
+**拒绝一个事实不会让它不发生，只会让它消失。**
+
+**处置**：
+1. **规则反转** —— `.failed` 成为**唯一一条与源态无关**的边：`if newState == .failed { return true }`。
+2. 用**穷尽断言**守住整类问题，而不是补四条：
+   `testFailureIsReachableFromEveryState` —— 对全部 7 个状态断言 `transition(to: .failed) != .rejected`。
+3. 装配层补两条用例（`.readyToPlay → .failed`、`.paused → .failed` 必须上报），钉住"拒绝即静默"这一行为。
+4. **反转流程**：先在票面（`docs/03` 📌）**列出被反转的断言原文与行号**，再改 —— 有先例的规则不能悄悄翻。
+
+**防再犯**：**凡是"按条件决定要不要上报"的分支，都要问一句「被丢掉的那一支，谁会知道？」**
+若答案是"没人"，那它就不是过滤，而是一个**静默丢事件的洞**。
+
+> 同族：`P-019`（空输出 ≠ 没发生）· `P-023`（退出码 0 ≠ 测试跑了）· `P-034`（不在门禁里 ⇒ 返回绿）。
+> 共同点：**失败被"优化"掉了，而优化者以为自己在做校验。**
 
 ---
 
