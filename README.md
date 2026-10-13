@@ -2,7 +2,15 @@
 
 做一个**自己的 iOS 优先 / macOS 跟进播放器**：libmpv 单内核，本地文件 + 网络点播 + 直播全都要，能播系统播放器播不了的格式（mkv / ASS 特效字幕 / 各种编码）。
 
-**当前状态**：Phase 0 已完成 —— **`G0` / `M0`（路线成立）达成**。已产出**自建动态 LGPL-2.1 libmpv 产物**，模拟器与真机（iPhone 16 Pro）双通出画面。下一步进 **Phase 1（骨架与内核抽象）**。
+**当前状态**：**Phase 0 与 Phase 1 均已完成** —— **`G0`/`M0`（路线成立）** 与 **`G1`/`M1`（地基可测）** 达成。
+
+| 里程碑 | 状态 |
+| --- | --- |
+| M0 路线成立 | ✅ 已产出**自建动态 LGPL-2.1 libmpv 产物**，模拟器与真机（iPhone 16 Pro）双通出画面 |
+| M1 地基可测 | ✅ 内核边界已立（`PlayerKernelProtocol` / 注册表 / `FakeKernel` / 状态机 / 时间模型）· **84 tests 全绿** · 变异 **27/27** 杀死 · `PlayerCore` 零 UI 依赖 |
+| M2 能看片 | ⬅ **进行中**（Phase 2：`MPVKernel` 生命周期 + 事件循环 ✓ · `wid` 视频表面 ✓ · 下一步真画面） |
+
+门禁：`./Tools/gate.sh`（退出码 0 = `G1` 达成）。
 
 ## 文档索引
 
@@ -15,28 +23,36 @@
 | [`docs/05-libmpv产物实测报告.md`](docs/05-libmpv产物实测报告.md) | `P0-T4`：上游产物的许可实测（发现其落在 LGPLv3） | 需要许可结论时 |
 | [`docs/06-P0-T5a技术验证报告.md`](docs/06-P0-T5a技术验证报告.md) | `P0-T5a`：`wid` + MoltenVK 技术验证（模拟器 + 真机双通） | `P2` 接入前 |
 | [`docs/07-P0-T5b验证报告.md`](docs/07-P0-T5b验证报告.md) | `P0-T5b`：**自建动态 LGPL-2.1 产物**（`G0` 达成）· 许可证据链 · 端到端 | 需要产物规格时 |
-| [`docs/PITFALLS.md`](docs/PITFALLS.md) | **踩坑日志**（现象 → 根因 → 处置 → 防再犯），现有 12 条 | **动手前扫一遍**，能省掉重复排查 |
+| [`docs/08-P1验证报告.md`](docs/08-P1验证报告.md) | `P1`：骨架与内核抽象 · **`G1` 达成** · 交付物清单 · 集成测试抓到的缺陷 | 进 Phase 2 前 |
+| [`docs/PITFALLS.md`](docs/PITFALLS.md) | **踩坑日志**（现象 → 根因 → 处置 → 防再犯），现有 19 条 | **动手前扫一遍**，能省掉重复排查 |
 
 ## 工程结构
 
 ```
-Package.swift            ← SPM 包：PlayerCore / PlayerUI 双 target（iOS 17 / macOS 14 / Swift 6）
+Package.swift            ← 根包 PlayerStack：PlayerCore / PlayerUI 双 target（iOS 17 / macOS 14 / Swift 6）
 Sources/
-├── PlayerCore/          ← 内核抽象与状态机（⛔ 禁止 import SwiftUI / UIKit / AppKit）
+├── PlayerCore/          ← 内核边界与状态机（⛔ 禁止 import SwiftUI / UIKit / AppKit）
 └── PlayerUI/            ← SwiftUI 视图层
-Tests/PlayerCoreTests/   ← 纯逻辑单测
-Tools/                   ← mutation_check.py（变异测试闸门，崩溃安全）
+Tests/PlayerCoreTests/   ← 纯逻辑单测 + 集成测试（跑在 macOS）
+Tools/                   ← gate.sh（G1 门禁）· mutation_check.py · stage-libmpv.sh
+MPV/                     ← ⚠️ 独立包 PlayerMPV：libmpv 适配器（只在 iOS 上编译，见下）
 Demo/                    ← app shell（project.yml → xcodegen 生成，产物不入仓）
 ```
 
 ```bash
-swift build && swift test              # 包本身
-python3 Tools/mutation_check.py        # 变异测试闸门：全杀死才退 0
+./Tools/gate.sh                        # G1 门禁：零 UI import + build + test + 变异（退出 0 即通过）
+swift build && swift test              # 只跑根包
+python3 Tools/mutation_check.py        # 只跑变异闸门
 cd Demo && xcodegen generate           # 生成 app 工程
+
+./Tools/stage-libmpv.sh                # ⚠️ 构建 MPV 包前必须先跑（产物 104 MB，gitignored）
+cd MPV && xcodebuild -scheme PlayerMPV -destination 'platform=iOS Simulator' build
 ```
 
 > ⚠️ **`PlayerCore` 里出现 `import SwiftUI` / `UIKit` / `AppKit` 即视为违规** —— 这是 `G1` 判定门的一条硬线，破了就永久失去可测性。
+> ⚠️ **根包不得引用 libmpv** —— 适配器只在 `MPV/` 独立包内。原因：自建产物**只有 iOS 切片**，而 SPM 会校验 `binaryTarget` 路径存在性（与平台条件无关）⇒ 一旦放进根包，**新克隆的 `swift test` 必失败**。
 > ⚠️ **以 `AsyncStream` 为边界的测试必须能"收尾 + 排空 + 断言 nil"**，否则只会"过"或"挂死"（见 `docs/PITFALLS.md` `P-014`）。
+> ⚠️ **每个"边界 + 消费者"的组合必须有集成测试** —— 单元测试全绿不等于部件能组合（见 `P-018`）。
 
 ## 目录结构
 
@@ -93,12 +109,16 @@ playerlearning/
 
 ## 下一步
 
-进 **Phase 1 · 骨架与内核抽象**（`docs/03` §三），判定门 **`G1`**：
+进 **Phase 2 · libmpv 适配器**（`docs/03` §三），判定门 **`G2`：本地 mkv 出画 + 出声 + 能 seek**。
 
-1. `Package.swift`：`PlayerCore` / `PlayerUI` 双 target + XcodeGen Demo 工程；
-2. `PlayerKernelProtocol` + 注册表 + `FakeKernel`；
-3. `PlayerState` 状态机 + `AsyncStream` 时间流（0.2–1 s 粒度）；
-4. 纯逻辑单测 + 跑通 mutation testing；
-5. **`PlayerCore` 内 `grep -r "import SwiftUI\|import UIKit\|import AppKit"` 必须为空。**
+| ticket | 内容 |
+| --- | --- |
+| `P2-T1` | `MPVKernel` 实现 `PlayerKernelProtocol`：`mpv_create` / `mpv_initialize` / 事件循环（`mpv_set_wakeup_callback` + `mpv_wait_event`） |
+| `P2-T2` | `VideoOutputProtocol` 抽象 + `WindowEmbedOutput`（`wid` 实现，`CAMetalLayer`） |
+| `P2-T3` | mpv 属性 ↔ 模型映射（`time-pos` / `duration` / `pause` / `paused-for-cache` / `width` / `height` / `track-list`） |
+| `P2-T4` | 播放控制：load / play / pause / seek / stop；`hwdec=videotoolbox` |
+| `P2-T5` | 本地 mkv 端到端验证（含多音轨文件） |
+
+**可直接复用的既有成果**：产物接入方式与已验证配置见 [`docs/06`](docs/06-P0-T5a技术验证报告.md) / [`docs/07`](docs/07-P0-T5b验证报告.md)；`spike/p0-t5b-lgpl-dynamic-build/verify/` 就是一份能跑通的接线样板。
 
 > **范围锚点是 M3（"能顺手用"）**：任何不推进 M3 的需求都往后排。

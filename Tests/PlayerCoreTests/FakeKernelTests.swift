@@ -36,7 +36,7 @@ final class FakeKernelTests: XCTestCase {
         XCTAssertEqual(snapshot.duration, 42)
     }
 
-    func testLoadEmitsStateChangeBeforeDuration() async throws {
+    func testLoadEmitsPreparingThenReadyThenDuration() async throws {
         let kernel = FakeKernel(duration: 42)
         var iterator = (await kernel.events()).makeAsyncIterator()
 
@@ -45,8 +45,12 @@ final class FakeKernelTests: XCTestCase {
 
         let first = await iterator.next()
         let second = await iterator.next()
-        XCTAssertEqual(first, .stateChanged(.readyToPlay))
-        XCTAssertEqual(second, .durationChanged(42))
+        let third = await iterator.next()
+        let beyond = await iterator.next()
+        XCTAssertEqual(first, .stateChanged(.preparing))
+        XCTAssertEqual(second, .stateChanged(.readyToPlay))
+        XCTAssertEqual(third, .durationChanged(42))
+        XCTAssertNil(beyond)
     }
 
     func testLoadFailurePropagatesAndLeavesStateFailed() async {
@@ -63,16 +67,18 @@ final class FakeKernelTests: XCTestCase {
         }
     }
 
-    func testLoadFailureEmitsFailedStateAndNothingElse() async {
+    func testLoadFailureEmitsPreparingThenFailedAndNothingElse() async {
         let kernel = FakeKernel(loadError: KernelFailure())
         var iterator = (await kernel.events()).makeAsyncIterator()
 
         try? await kernel.load(PlayerResource(url: URL(fileURLWithPath: "/tmp/sample.mkv")))
         await kernel.finishEvents()
 
-        let event = await iterator.next()
+        let first = await iterator.next()
+        let second = await iterator.next()
         let beyond = await iterator.next()
-        XCTAssertEqual(event, .stateChanged(.failed))
+        XCTAssertEqual(first, .stateChanged(.preparing))
+        XCTAssertEqual(second, .stateChanged(.failed))
         XCTAssertNil(beyond)
     }
 

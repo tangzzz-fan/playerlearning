@@ -11,7 +11,8 @@ let package = Package(
     targets: [
         .target(name: "PlayerCore"),
         .target(name: "PlayerUI", dependencies: ["PlayerCore"]),
-        .testTarget(name: "PlayerCoreTests", dependencies: ["PlayerCore"])
+        .testTarget(name: "PlayerCoreTests", dependencies: ["PlayerCore"]),
+        .testTarget(name: "PlayerUITests", dependencies: ["PlayerCore", "PlayerUI"])
     ],
     swiftLanguageModes: [.v6]
 )

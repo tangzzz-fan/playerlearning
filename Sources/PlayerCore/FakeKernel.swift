@@ -24,6 +24,7 @@ public actor FakeKernel: PlayerKernelProtocol {
     }
 
     public func load(_ resource: PlayerResource) async throws {
+        emit(.stateChanged(.preparing))
         if let scriptedLoadError {
             emit(.stateChanged(.failed))
             throw scriptedLoadError

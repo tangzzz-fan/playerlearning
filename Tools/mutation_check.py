@@ -110,6 +110,14 @@ MUTATIONS = [
      "                var model = self",
      "                var model = PlayerTimeModel()",
      "time: 时间流不继承模型配置"),
+    ("Sources/PlayerUI/WindowEmbedOutput.swift",
+     "if Int(newValue.width) > 1 && Int(newValue.height) > 1 {",
+     "if Int(newValue.width) > 1 || Int(newValue.height) > 1 {",
+     "surface: drawableSize 退化守卫把 && 写成 ||"),
+    ("Sources/PlayerUI/WindowEmbedOutput.swift",
+     "if Int(newValue.width) > 1 && Int(newValue.height) > 1 {",
+     "if Int(newValue.width) >= 1 && Int(newValue.height) >= 1 {",
+     "surface: drawableSize 退化守卫放宽为 >= 1"),
 ]
 
 

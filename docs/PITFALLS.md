@@ -251,4 +251,150 @@
 > 但**这条不能删**：它依赖的是 `max` 对 NaN 的**未定义/未承诺**行为。守卫的作用是把"**恰好对**"变成"**明确对**"。
 > ⇒ 判据要加半句：**"逻辑上真改变行为吗？如果没改 —— 行为是*被规定*的，还是*恰好*对的？"** 恰好对的，保留守卫并补一条测试把语义钉住。
 
+---
+
+## P-018 · 单元测试各自全绿 ≠ 部件能组合（集成测试首跑 8/8 全崩）
+
+**现象**：`P1-T5` 写下第一条集成测试（`FakeKernel` → `PlayerStateMachine` + `PlayerTimeModel`），**8 个测试全失败**，证据非常集中：
+
+```
+不应出现被拒的状态：[.readyToPlay, .playing, .paused, .playing]
+```
+
+**根因**：`FakeKernel.load()` **跳过了 `.preparing`**，直接发 `idle → readyToPlay`；而状态机的迁移表（正确地）只允许 `idle → preparing`。
+关键点是：**两边的单元测试各自都过** —— 因为它们测的都是**自己的内部一致性**，没有任何一条测试在测**两者的接口约定**。
+
+**处置**：**修 fake 让它保真**（`load` 先发 `.preparing`），**而不是放宽状态机**。
+理由：放宽状态机会"永久掩盖"这类序列缺陷，而修 fake 只是让替身更接近真内核 —— 真内核本来就是 `load → preparing → readyToPlay`。
+
+**防再犯**：
+1. **单元测试全绿不等于部件能组合。** 对每一对"边界 + 消费者"至少写一条集成测试（本项目的缝正是 `PlayerKernelProtocol`，所以"内核 → 状态机 / 时间模型"必须各有一条）。
+2. **测试替身要保真到状态序列**，不只是方法签名。签名对了、序列错了，是最难查的一类假绿。
+
+---
+
+## P-019 · macOS 没有 `timeout`（那是 GNU coreutils），而且**它静默失败**
+
+**现象**：`timeout 180 swift test ... | grep -E "..."` 输出为空。我把它读成"跑了，但没有匹配行"，于是又跑了一遍并开始怀疑测试挂死。
+
+**根因**：macOS 是 BSD userland，**没有 `timeout` 命令**。它报的 `command not found` 进了 stderr，而我的管道只过滤 stdout ⇒ **看起来像"命令跑了但没结果"**。
+
+**处置**：不要依赖 `timeout`。需要超时就用：① 工具自带的超时（Python `subprocess.run(timeout=)` 可用，`Tools/mutation_check.py` 就是这么做的）；② `perl -e 'alarm 180; exec @ARGV' -- <cmd>`。
+
+**防再犯**：⚠️ **管道里"空输出"不等于"没有结果"** —— 空输出时**先确认命令真的执行过**（看 `$?`、看 stderr、或先不加管道跑一次）。
+> 这条和 `P-014` 是同一类错误的两副面孔：**把"没有现象"当成"没有发生"**。
+
+---
+
+## P-020 · ⚠️⚠️ `cmd > file` 里 `cmd` 不存在时，**重定向照样执行** —— 本次把仓库根的 `Package.swift` 截成 0 字节
+
+**现象**：构建报 `error: '/Users/jove/Developments/playerlearning/Package.swift' is empty`。查证：**仓库根的 `Package.swift` 变成 0 字节**，时间戳与一次探针脚本的运行时刻完全一致。
+
+**根因**：那个探针脚本干了这件事：
+
+```bash
+rm -rf /tmp/probe-X && mkdir -p /tmp/probe-X/Sources/A && cd /tmp/probe-X
+cat > Package.swift <<EOF
+...
+EOF
+```
+
+沙箱的 `rm` shim 失败了，随后 `mkdir` **也报 command not found** ⇒ **`cd` 失败，CWD 仍是仓库根**。
+而 `cat` 同样 `command not found` ⇒ **`cat` 从未运行** —— 但 shell **已经先执行了 `> Package.swift` 这个重定向**，把**仓库根**那个同名文件清零了。
+
+**这就是最阴的地方**：命令没跑，**文件却已经被动**，而且没有任何报错指向它。
+
+**处置**：
+1. `git checkout -- Package.swift` 还原（**已跟踪文件 = git 是最强兜底**）。
+2. 全面查损：`git status --short` + `find . -name "*.swift" -size 0`。结论：**只有 `Package.swift` 受损**（`Sources/A/A.swift` 因目标目录不存在，重定向本身就失败了，未创建）。
+3. 根包门禁复跑：`./Tools/gate.sh` → **G1 达成**，无残留影响。
+
+**防再犯（四条，都要）**：
+1. **探针/临时脚本写文件一律用绝对路径** —— 绝不"先 `cd` 再相对写"。
+2. **`>` 的危险性独立于命令是否存在**："命令没跑"**不等于**"文件没被动"。
+3. **在仓库内跑临时脚本本身就是高危**：优先在 `/tmp` 用绝对路径；能用编辑器/写文件工具就别用 heredoc。
+4. **危险操作后立刻 `git status --short` 核对** —— 本次正是靠它发现的。已跟踪文件让损失可控，**这条是最后一道防线**。
+
+---
+
+## P-021 · SPM 的**路径依赖标识是「目录名」**，不是 manifest 里的 `name`
+
+**现象**：
+```
+error: unknown package 'PlayerStack' in dependencies of target 'PlayerMPV';
+       valid packages are: 'playerlearning' (at '/Users/jove/Developments/playerlearning')
+```
+
+**根因**：对 `.package(path:)`，SPM 用**目录名**作为 package identity，**manifest 里的 `name: "PlayerStack"` 不参与**。
+⇒ 直接写 `.product(name: "PlayerCore", package: "PlayerStack")` 解析失败；而裸字符串（`.byName`）在跨包时同样不可靠。
+
+**处置**：**显式命名路径依赖**，把标识与目录名解耦：
+
+```swift
+dependencies: [.package(name: "PlayerStack", path: "..")]
+// 之后
+.product(name: "PlayerCore", package: "PlayerStack")
+```
+
+**防再犯**：跨包引用**一律用 `.package(name:path:)` + `.product(name:package:)`**。
+顺带一个后果值得记：如果只写 `.package(path: "..")`，**仓库目录一改名，`MPV/Package.swift` 就会断** —— 而仓库命名（`D1`）目前还没定。
+
+---
+
+## P-022 · actor 的 `deinit` 访问不了非 `Sendable` 的隔离状态
+
+**现象**：
+```
+error: cannot access property 'handle' with a non-Sendable type 'OpaquePointer?' from nonisolated deinit
+```
+
+**根因**：actor 的 `deinit` 是 `nonisolated`，而 `OpaquePointer?` 不是 `Sendable`。
+
+**处置**：**不要用 `nonisolated(unsafe)` 绕**（那是把安全洞焊进代码）。改用**所有权持有者**：
+
+```swift
+private final class MPVHandleOwner: @unchecked Sendable {
+    let pointer: OpaquePointer
+    deinit {
+        mpv_set_wakeup_callback(pointer, nil, nil)
+        mpv_terminate_destroy(pointer)
+    }
+}
+```
+
+actor 只持有一个 `var owner: MPVHandleOwner?` ⇒ **释放时机自动跟随生命周期**，`@unchecked` 也是成立的（`let` 指针 + 访问由 actor 串行化）。
+
+**防再犯**：包装 C 资源时，**把"释放"放进一个拥有所有权的引用类型**，而不是依赖调用方记得调 `shutdown()`。
+> 显式 cleanup 一定会被忘记；`deinit` 不会被忘记。另外：这个模式让 `shutdown()` 退化成"把 `owner` 置 nil"，不再需要自己管两套路径。
+
+---
+
+## P-023 · ⚠️ `swift test` 的 "All tests" 小结是**按 test bundle 各打一次**，取最后一行会**少算**
+
+**现象**：加了 `PlayerUITests`（9 条）后，`swift test | tail` 显示 **75 tests** —— 与加之前**一模一样**。一度以为新 target 没被执行（`--list-tests` 明明能看到那 9 条）。
+
+**根因**：SPM 会为**每个 test bundle** 各自跑一遍并各打一次 `Test Suite 'All tests'` 小结。实际输出是：
+
+```
+Test Suite 'PlayerUITests.xctest' passed
+	 Executed 9 tests, with 0 failures          ← bundle 1
+Test Suite 'All tests' passed
+	 Executed 9 tests, with 0 failures
+	 …（PlayerCoreTests 的各 suite）
+Test Suite 'PlayerCoreTests.xctest' passed
+	 Executed 75 tests, with 0 failures         ← bundle 2
+Test Suite 'All tests' passed
+	 Executed 75 tests, with 0 failures         ← 这是"最后一行"，但它只是 bundle 2
+```
+
+⇒ `tail -1` 拿到的是**最后一个 bundle 的小结**，不是全局总数。真实总数是 **84（75 + 9）**。
+
+**处置**：`Tools/gate.sh` 改为**按 bundle 配对后求和**（`grep -A1 "'*.xctest' passed"` → 提取计数 → `awk` 求和），并打印 bundle 数以便核对。
+
+**防再犯**：**报测试数不要用 `tail -1`**。要么按 bundle 汇总，要么用 `swift test --list-tests | grep -c` 直接数条目。
+> 这条与 `P-014`/`P-019` 同族：**"看起来没变" 不等于 "没发生"**。凡是"改动后数字完全没动"，先怀疑**采集方式**，而不是接受结论。
+
+
+
+
 
