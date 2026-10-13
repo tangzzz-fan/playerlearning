@@ -10,22 +10,49 @@ public enum MPVKernelError: Error, Equatable, Sendable {
     case commandFailed(name: String, code: Int32)
 }
 
+/// mpv 唤醒回调的**可安全持有**的触发器。
+///
+/// `mpv_set_wakeup_callback` 只接受一个 `void *` 上下文，而回调**可能从 mpv 自己的线程打进来**。
+/// 原先直接把 `self` 的**未持有**指针塞进去（`passUnretained`）⇒ kernel 一开始释放，
+/// 回调仍可能拿到已失效的指针（`docs/09` §三 缺陷 c）。
+///
+/// 现在：`sink` 由 `MPVHandleOwner` **强持有**（`passRetained`），
+/// 且**在 `mpv_terminate_destroy` 返回之后**才释放 —— 那时 mpv 的线程已经 join，不再有回调在飞。
+/// `sink` 自身**不强持有** kernel（闭包里 `[weak self]`），所以**不会**形成
+/// `kernel → owner → sink → kernel` 的引用环（否则 kernel 永远释放不掉，等于另一种泄漏）。
+private final class WakeupSink: @unchecked Sendable {
+    private let notify: @Sendable () -> Void
+
+    init(notify: @escaping @Sendable () -> Void) {
+        self.notify = notify
+    }
+
+    func fire() {
+        notify()
+    }
+}
+
 private final class MPVHandleOwner: @unchecked Sendable {
     let pointer: OpaquePointer
+    private let sink: Unmanaged<WakeupSink>
 
-    init(pointer: OpaquePointer) {
+    init(pointer: OpaquePointer, sink: WakeupSink) {
         self.pointer = pointer
+        self.sink = Unmanaged.passRetained(sink)
     }
 
     deinit {
+        // 顺序有讲究：先摘回调（此后 mpv 不再发起新的唤醒），
+        // 再销毁句柄（join mpv 线程，确保没有回调正在执行），最后才放掉 sink。
         mpv_set_wakeup_callback(pointer, nil, nil)
         mpv_terminate_destroy(pointer)
+        sink.release()
     }
 }
 
 public actor MPVKernel: PlayerKernelProtocol {
     private var owner: MPVHandleOwner?
-    private var windowEmbedHandle: Int64?
+    private let windowEmbedHandle: Int64?
     private var continuation: AsyncStream<PlayerKernelEvent>.Continuation?
     private var state: PlayerState = .idle
     private var currentTime: Double = 0
@@ -34,7 +61,27 @@ public actor MPVKernel: PlayerKernelProtocol {
     private var naturalSize: CGSize = .zero
     private var videoSizeTracker = VideoSizeTracker()
 
-    public init() {}
+    /// 注册表用的**无参**构造（`PlayerKernelProtocol` 要求）—— 等价于**无画面**。
+    ///
+    /// ⚠️ **不要把这条路径当作"默认构造"**：它给不出画面，`vo` 会落到 `null`。
+    /// 需要画面时必须用 `init(windowEmbedHandle:)` 显式给出宿主句柄。
+    ///
+    /// 为什么保留而不是删掉：`PlayerKernelRegistry` 靠无参构造才能泛型地实例化内核类型。
+    /// 但这条口子有个已知隐患 —— 当内核分派真正投入使用（第二个内核出现）时，
+    /// 无参构造口**必须**换成携带视频表面的构造口，否则"注册表造出来的播放器没有画面"
+    /// 会以**零报错**的形式重现（就是本票修掉的缺陷 a 的变体）。已记入 `docs/03`。
+    public init() {
+        windowEmbedHandle = nil
+    }
+
+    /// 有画面的构造：`windowEmbedHandle` 是宿主原生窗口句柄（iOS 上是 `UIView` 的 `wid`）。
+    ///
+    /// **必须在构造时给定**：`applyOptions` 在 `mpv_initialize` **之前**读它，
+    /// 原先那个 `attach` setter 会让"晚一步"变成**静默无画面**（`docs/09` §三 缺陷 a）。
+    /// 参数**非可选**是刻意的 —— 想要无画面请走 `init()`，那是显式选择而非时序事故。
+    public init(windowEmbedHandle: Int64) {
+        self.windowEmbedHandle = windowEmbedHandle
+    }
 
     public func events() async -> AsyncStream<PlayerKernelEvent> {
         let (stream, continuation) = AsyncStream<PlayerKernelEvent>.makeStream()
@@ -113,13 +160,13 @@ public actor MPVKernel: PlayerKernelProtocol {
             emit(.stateChanged(.failed))
             throw error
         }
-        owner = MPVHandleOwner(pointer: created)
-        installWakeupCallback(created)
+        let sink = WakeupSink { [weak self] in
+            Task { await self?.drainEvents() }
+        }
+        let handleOwner = MPVHandleOwner(pointer: created, sink: sink)
+        owner = handleOwner
+        installWakeupCallback(created, sink: sink)
         return created
-    }
-
-    public func attach(windowEmbedHandle: Int64) {
-        self.windowEmbedHandle = windowEmbedHandle
     }
 
     private func applyOptions(_ handle: OpaquePointer) {
@@ -151,12 +198,11 @@ public actor MPVKernel: PlayerKernelProtocol {
         _ = mpv_observe_property(handle, 0, "height", MPV_FORMAT_INT64)
     }
 
-    private nonisolated func installWakeupCallback(_ handle: OpaquePointer) {
+    private nonisolated func installWakeupCallback(_ handle: OpaquePointer, sink: WakeupSink) {
         mpv_set_wakeup_callback(handle, { context in
             guard let context else { return }
-            let kernel = Unmanaged<MPVKernel>.fromOpaque(context).takeUnretainedValue()
-            Task { await kernel.drainEvents() }
-        }, Unmanaged.passUnretained(self).toOpaque())
+            Unmanaged<WakeupSink>.fromOpaque(context).takeUnretainedValue().fire()
+        }, Unmanaged.passUnretained(sink).toOpaque())
     }
 
     private func drainEvents() {
