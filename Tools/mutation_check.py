@@ -118,6 +118,54 @@ MUTATIONS = [
      "if Int(newValue.width) > 1 && Int(newValue.height) > 1 {",
      "if Int(newValue.width) >= 1 && Int(newValue.height) >= 1 {",
      "surface: drawableSize 退化守卫放宽为 >= 1"),
+    ("Sources/PlayerCore/PlayerController.swift",
+     "guard machine.transition(to: newState) == .applied else { return }",
+     "guard machine.transition(to: newState) != .rejected else { return }",
+     "controller: 同态状态也上报"),
+    ("Sources/PlayerCore/PlayerController.swift",
+     "guard machine.transition(to: newState) == .applied else { return }",
+     "guard machine.transition(to: newState) == .rejected else { return }",
+     "controller: 状态上报条件取反为 .rejected"),
+    ("Sources/PlayerCore/PlayerController.swift",
+     "continuation?.yield(.stateChanged(newState))",
+     "continuation?.yield(.stateChanged(.idle))",
+     "controller: 状态上报恒为 .idle"),
+    ("Sources/PlayerCore/PlayerController.swift",
+     "case .currentTimeChanged, .durationChanged:",
+     "case .currentTimeChanged:",
+     "controller: 丢弃时长事件"),
+    ("Sources/PlayerCore/PlayerController.swift",
+     "continuation?.yield(.timeChanged(update))",
+     "continuation?.yield(.timeChanged(PlayerTimeUpdate(currentTime: update.currentTime, duration: 0)))",
+     "controller: 时间上报丢时长"),
+    ("Sources/PlayerCore/PlayerController.swift",
+     "guard flag != isBuffering else { return }",
+     "guard flag == isBuffering else { return }",
+     "controller: 缓冲翻转判定取反"),
+    ("Sources/PlayerCore/PlayerController.swift",
+     "isBuffering = flag",
+     "isBuffering = !flag",
+     "controller: 缓冲态写入取反"),
+    ("Sources/PlayerCore/PlayerController.swift",
+     "await kernel.seek(to: time.clampSeekTarget(seconds))",
+     "await kernel.seek(to: seconds)",
+     "controller: seek 未钳制"),
+    ("Sources/PlayerCore/PlayerController.swift",
+     "time = PlayerTimeModel(interval: timeInterval)",
+     "time = PlayerTimeModel()",
+     "controller: 时间模型不继承间隔配置"),
+    ("Sources/PlayerCore/PlayerController.swift",
+     "state: machine.state,",
+     "state: .idle,",
+     "controller: 快照状态恒为 .idle"),
+    ("Sources/PlayerCore/PlayerController.swift",
+     "duration: time.duration,",
+     "duration: 0,",
+     "controller: 快照丢时长"),
+    ("Sources/PlayerCore/PlayerController.swift",
+     "isBuffering: isBuffering",
+     "isBuffering: false",
+     "controller: 快照丢缓冲态"),
 ]
 
 
@@ -147,10 +195,19 @@ def snapshot() -> None:
         shutil.copyfile(ROOT / relative, target)
 
 
+def swift_escape_args() -> list[str]:
+    """受限 shell 里 macOS 不允许嵌套 apply 沙箱，SwiftPM 会直接失败；此处按需补逃逸参数。"""
+    probe = subprocess.run(
+        ["sandbox-exec", "-p", "(version 1)(deny default)(allow file-read*)", "/bin/echo", "ok"],
+        capture_output=True,
+    )
+    return [] if probe.returncode == 0 else ["--disable-sandbox"]
+
+
 def run_suite() -> str:
     try:
         result = subprocess.run(
-            ["swift", "test"],
+            ["swift", "test", *swift_escape_args()],
             cwd=ROOT,
             capture_output=True,
             text=True,

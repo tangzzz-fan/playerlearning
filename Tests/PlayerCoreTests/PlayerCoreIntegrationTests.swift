@@ -1,4 +1,5 @@
-import XCTest
+import Foundation
+import Testing
 @testable import PlayerCore
 
 private struct PlayerCoreHarness {
@@ -26,7 +27,11 @@ private struct PlayerCoreHarness {
     }
 }
 
-final class PlayerCoreIntegrationTests: XCTestCase {
+private struct LoadFailure: Error {}
+
+@Suite
+struct PlayerCoreIntegrationTests {
+    @Test
     func testLoadTakesMachineThroughPreparingToReadyAndPublishesDuration() async throws {
         let kernel = FakeKernel(duration: 120)
         var harness = PlayerCoreHarness()
@@ -35,11 +40,12 @@ final class PlayerCoreIntegrationTests: XCTestCase {
         try await kernel.load(PlayerResource(url: URL(fileURLWithPath: "/tmp/sample.mkv")))
         await harness.consumeAll(from: kernel, events: events)
 
-        XCTAssertEqual(harness.machine.state, .readyToPlay)
-        XCTAssertEqual(harness.time.duration, 120)
-        XCTAssertTrue(harness.rejectedStates.isEmpty, "不应出现被拒的状态：\(harness.rejectedStates)")
+        #expect(harness.machine.state == .readyToPlay)
+        #expect(harness.time.duration == 120)
+        #expect(harness.rejectedStates.isEmpty, "不应出现被拒的状态：\(harness.rejectedStates)")
     }
 
+    @Test
     func testPlaybackLifecycleDrivesMachineWithoutRejections() async throws {
         let kernel = FakeKernel(duration: 120)
         var harness = PlayerCoreHarness()
@@ -52,10 +58,11 @@ final class PlayerCoreIntegrationTests: XCTestCase {
         await kernel.stop()
         await harness.consumeAll(from: kernel, events: events)
 
-        XCTAssertEqual(harness.machine.state, .idle)
-        XCTAssertTrue(harness.rejectedStates.isEmpty, "不应出现被拒的状态：\(harness.rejectedStates)")
+        #expect(harness.machine.state == .idle)
+        #expect(harness.rejectedStates.isEmpty, "不应出现被拒的状态：\(harness.rejectedStates)")
     }
 
+    @Test
     func testFailedLoadLeavesMachineFailedWithoutRejections() async {
         let kernel = FakeKernel(loadError: LoadFailure())
         var harness = PlayerCoreHarness()
@@ -64,10 +71,11 @@ final class PlayerCoreIntegrationTests: XCTestCase {
         try? await kernel.load(PlayerResource(url: URL(fileURLWithPath: "/tmp/broken.mkv")))
         await harness.consumeAll(from: kernel, events: events)
 
-        XCTAssertEqual(harness.machine.state, .failed)
-        XCTAssertTrue(harness.rejectedStates.isEmpty, "不应出现被拒的状态：\(harness.rejectedStates)")
+        #expect(harness.machine.state == .failed)
+        #expect(harness.rejectedStates.isEmpty, "不应出现被拒的状态：\(harness.rejectedStates)")
     }
 
+    @Test
     func testRetryAfterFailureIsAccepted() async {
         let kernel = FakeKernel(loadError: LoadFailure())
         var harness = PlayerCoreHarness()
@@ -78,10 +86,11 @@ final class PlayerCoreIntegrationTests: XCTestCase {
         await kernel.emit(.stateChanged(.readyToPlay))
         await harness.consumeAll(from: kernel, events: events)
 
-        XCTAssertEqual(harness.machine.state, .readyToPlay)
-        XCTAssertTrue(harness.rejectedStates.isEmpty, "不应出现被拒的状态：\(harness.rejectedStates)")
+        #expect(harness.machine.state == .readyToPlay)
+        #expect(harness.rejectedStates.isEmpty, "不应出现被拒的状态：\(harness.rejectedStates)")
     }
 
+    @Test
     func testSeekTargetIsClampedBeforeReachingKernel() async throws {
         let kernel = FakeKernel(duration: 100)
         var harness = PlayerCoreHarness()
@@ -96,10 +105,11 @@ final class PlayerCoreIntegrationTests: XCTestCase {
         }
 
         let recorded = await kernel.seekRequests
-        XCTAssertEqual(targets, [0, 42, 100])
-        XCTAssertEqual(recorded, [0, 42, 100])
+        #expect(targets == [0, 42, 100])
+        #expect(recorded == [0, 42, 100])
     }
 
+    @Test
     func testTimeEventsFeedModelWhileMachineTracksState() async throws {
         let kernel = FakeKernel(duration: 60)
         var harness = PlayerCoreHarness()
@@ -112,16 +122,16 @@ final class PlayerCoreIntegrationTests: XCTestCase {
         await kernel.emit(.currentTimeChanged(0.3))
         await harness.consumeAll(from: kernel, events: events)
 
-        XCTAssertEqual(harness.machine.state, .playing)
-        XCTAssertEqual(harness.time.currentTime, 0.3)
-        XCTAssertEqual(
-            harness.updates.map(\.currentTime),
-            [0, 0.3],
+        #expect(harness.machine.state == .playing)
+        #expect(harness.time.currentTime == 0.3)
+        #expect(
+            harness.updates.map(\.currentTime) == [0, 0.3],
             "毫秒级事件应被节流到 0.25 s 粒度"
         )
-        XCTAssertTrue(harness.rejectedStates.isEmpty, "不应出现被拒的状态：\(harness.rejectedStates)")
+        #expect(harness.rejectedStates.isEmpty, "不应出现被拒的状态：\(harness.rejectedStates)")
     }
 
+    @Test
     func testBufferingEventsDoNotDisturbTimeUpdates() async throws {
         let kernel = FakeKernel(duration: 60)
         var harness = PlayerCoreHarness()
@@ -132,18 +142,18 @@ final class PlayerCoreIntegrationTests: XCTestCase {
         await kernel.emit(.bufferingChanged(false))
         await harness.consumeAll(from: kernel, events: events)
 
-        XCTAssertEqual(harness.updates.map(\.currentTime), [0], "只有时长事件产生一次更新")
+        #expect(harness.updates.map(\.currentTime) == [0], "只有时长事件产生一次更新")
     }
 
+    @Test
     func testRegistryResolvesTheFakeKernelForPlayback() async throws {
         let registry = PlayerKernelRegistry(kernelTypes: [FakeKernel.self])
 
-        let kernel = try XCTUnwrap(registry.firstKernelType?.init() as? FakeKernel)
+        let kernelType = try #require(registry.firstKernelType)
+        let kernel = try #require(kernelType.init() as? FakeKernel)
         try await kernel.load(PlayerResource(url: URL(fileURLWithPath: "/tmp/sample.mkv")))
 
         let loaded = await kernel.loadedResources
-        XCTAssertEqual(loaded.count, 1)
+        #expect(loaded.count == 1)
     }
 }
-
-private struct LoadFailure: Error {}

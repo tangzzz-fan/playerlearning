@@ -1,20 +1,24 @@
-import XCTest
+import Foundation
+import Testing
 @testable import PlayerCore
 
 private struct KernelFailure: Error {}
 
-final class FakeKernelTests: XCTestCase {
+@Suite
+struct FakeKernelTests {
+    @Test
     func testInitialSnapshotIsIdleAndEmpty() async {
         let kernel = FakeKernel()
 
         let snapshot = await kernel.snapshot()
 
-        XCTAssertEqual(snapshot.state, .idle)
-        XCTAssertEqual(snapshot.currentTime, 0)
-        XCTAssertEqual(snapshot.duration, 0)
-        XCTAssertFalse(snapshot.isBuffering)
+        #expect(snapshot.state == .idle)
+        #expect(snapshot.currentTime == 0)
+        #expect(snapshot.duration == 0)
+        #expect(!snapshot.isBuffering)
     }
 
+    @Test
     func testLoadRecordsResourceAndReachesReadyToPlay() async throws {
         let kernel = FakeKernel()
         let resource = PlayerResource(url: URL(fileURLWithPath: "/tmp/sample.mkv"))
@@ -23,19 +27,21 @@ final class FakeKernelTests: XCTestCase {
 
         let loaded = await kernel.loadedResources
         let snapshot = await kernel.snapshot()
-        XCTAssertEqual(loaded, [resource])
-        XCTAssertEqual(snapshot.state, .readyToPlay)
+        #expect(loaded == [resource])
+        #expect(snapshot.state == .readyToPlay)
     }
 
+    @Test
     func testLoadPublishesDurationOnSnapshot() async throws {
         let kernel = FakeKernel(duration: 42)
 
         try await kernel.load(PlayerResource(url: URL(fileURLWithPath: "/tmp/sample.mkv")))
 
         let snapshot = await kernel.snapshot()
-        XCTAssertEqual(snapshot.duration, 42)
+        #expect(snapshot.duration == 42)
     }
 
+    @Test
     func testLoadEmitsPreparingThenReadyThenDuration() async throws {
         let kernel = FakeKernel(duration: 42)
         var iterator = (await kernel.events()).makeAsyncIterator()
@@ -47,26 +53,27 @@ final class FakeKernelTests: XCTestCase {
         let second = await iterator.next()
         let third = await iterator.next()
         let beyond = await iterator.next()
-        XCTAssertEqual(first, .stateChanged(.preparing))
-        XCTAssertEqual(second, .stateChanged(.readyToPlay))
-        XCTAssertEqual(third, .durationChanged(42))
-        XCTAssertNil(beyond)
+        #expect(first == .stateChanged(.preparing))
+        #expect(second == .stateChanged(.readyToPlay))
+        #expect(third == .durationChanged(42))
+        #expect(beyond == nil)
     }
 
-    func testLoadFailurePropagatesAndLeavesStateFailed() async {
+    @Test
+    func testLoadFailurePropagatesAndLeavesStateFailed() async throws {
         let kernel = FakeKernel(loadError: KernelFailure())
 
-        do {
+        await #expect(throws: KernelFailure.self) {
             try await kernel.load(PlayerResource(url: URL(fileURLWithPath: "/tmp/sample.mkv")))
-            XCTFail("load should throw")
-        } catch {
-            let snapshot = await kernel.snapshot()
-            let loaded = await kernel.loadedResources
-            XCTAssertEqual(snapshot.state, .failed)
-            XCTAssertTrue(loaded.isEmpty)
         }
+
+        let snapshot = await kernel.snapshot()
+        let loaded = await kernel.loadedResources
+        #expect(snapshot.state == .failed)
+        #expect(loaded.isEmpty)
     }
 
+    @Test
     func testLoadFailureEmitsPreparingThenFailedAndNothingElse() async {
         let kernel = FakeKernel(loadError: KernelFailure())
         var iterator = (await kernel.events()).makeAsyncIterator()
@@ -77,33 +84,35 @@ final class FakeKernelTests: XCTestCase {
         let first = await iterator.next()
         let second = await iterator.next()
         let beyond = await iterator.next()
-        XCTAssertEqual(first, .stateChanged(.preparing))
-        XCTAssertEqual(second, .stateChanged(.failed))
-        XCTAssertNil(beyond)
+        #expect(first == .stateChanged(.preparing))
+        #expect(second == .stateChanged(.failed))
+        #expect(beyond == nil)
     }
 
+    @Test
     func testPlayPauseStopRecordCallsAndMoveState() async {
         let kernel = FakeKernel()
 
         await kernel.play()
         var snapshot = await kernel.snapshot()
         let plays = await kernel.playCallCount
-        XCTAssertEqual(snapshot.state, .playing)
-        XCTAssertEqual(plays, 1)
+        #expect(snapshot.state == .playing)
+        #expect(plays == 1)
 
         await kernel.pause()
         snapshot = await kernel.snapshot()
         let pauses = await kernel.pauseCallCount
-        XCTAssertEqual(snapshot.state, .paused)
-        XCTAssertEqual(pauses, 1)
+        #expect(snapshot.state == .paused)
+        #expect(pauses == 1)
 
         await kernel.stop()
         snapshot = await kernel.snapshot()
         let stops = await kernel.stopCallCount
-        XCTAssertEqual(snapshot.state, .idle)
-        XCTAssertEqual(stops, 1)
+        #expect(snapshot.state == .idle)
+        #expect(stops == 1)
     }
 
+    @Test
     func testPlayEmitsStateChange() async {
         let kernel = FakeKernel()
         var iterator = (await kernel.events()).makeAsyncIterator()
@@ -112,9 +121,10 @@ final class FakeKernelTests: XCTestCase {
         await kernel.finishEvents()
 
         let event = await iterator.next()
-        XCTAssertEqual(event, .stateChanged(.playing))
+        #expect(event == .stateChanged(.playing))
     }
 
+    @Test
     func testEmittedValuesAreReflectedInSnapshot() async {
         let kernel = FakeKernel()
 
@@ -122,19 +132,21 @@ final class FakeKernelTests: XCTestCase {
         await kernel.emit(.bufferingChanged(true))
 
         let snapshot = await kernel.snapshot()
-        XCTAssertEqual(snapshot.currentTime, 3.5)
-        XCTAssertTrue(snapshot.isBuffering)
+        #expect(snapshot.currentTime == 3.5)
+        #expect(snapshot.isBuffering)
     }
 
+    @Test
     func testEmittedStateChangeIsReflectedInSnapshot() async {
         let kernel = FakeKernel()
 
         await kernel.emit(.stateChanged(.finished))
 
         let snapshot = await kernel.snapshot()
-        XCTAssertEqual(snapshot.state, .finished)
+        #expect(snapshot.state == .finished)
     }
 
+    @Test
     func testSeekRecordsRequestedTimeWithoutClamping() async {
         let kernel = FakeKernel(duration: 10)
 
@@ -142,9 +154,10 @@ final class FakeKernelTests: XCTestCase {
         await kernel.seek(to: 999)
 
         let requests = await kernel.seekRequests
-        XCTAssertEqual(requests, [-5, 999])
+        #expect(requests == [-5, 999])
     }
 
+    @Test
     func testEmittedEventsArriveInOrder() async {
         let kernel = FakeKernel()
         var iterator = (await kernel.events()).makeAsyncIterator()
@@ -158,12 +171,13 @@ final class FakeKernelTests: XCTestCase {
         let second = await iterator.next()
         let third = await iterator.next()
         let beyond = await iterator.next()
-        XCTAssertEqual(first, .bufferingChanged(true))
-        XCTAssertEqual(second, .currentTimeChanged(1.5))
-        XCTAssertEqual(third, .bufferingChanged(false))
-        XCTAssertNil(beyond)
+        #expect(first == .bufferingChanged(true))
+        #expect(second == .currentTimeChanged(1.5))
+        #expect(third == .bufferingChanged(false))
+        #expect(beyond == nil)
     }
 
+    @Test
     func testFinishEventsEndsStream() async {
         let kernel = FakeKernel()
         var iterator = (await kernel.events()).makeAsyncIterator()
@@ -173,10 +187,11 @@ final class FakeKernelTests: XCTestCase {
 
         let event = await iterator.next()
         let beyond = await iterator.next()
-        XCTAssertEqual(event, .bufferingChanged(true))
-        XCTAssertNil(beyond)
+        #expect(event == .bufferingChanged(true))
+        #expect(beyond == nil)
     }
 
+    @Test
     func testEmitAfterFinishEventsIsDiscarded() async {
         let kernel = FakeKernel()
         var iterator = (await kernel.events()).makeAsyncIterator()
@@ -185,6 +200,6 @@ final class FakeKernelTests: XCTestCase {
         await kernel.emit(.bufferingChanged(true))
 
         let event = await iterator.next()
-        XCTAssertNil(event)
+        #expect(event == nil)
     }
 }

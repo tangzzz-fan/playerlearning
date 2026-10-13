@@ -1,84 +1,93 @@
 import CoreGraphics
 import PlayerCore
 import QuartzCore
-import XCTest
+import Testing
 @testable import PlayerUI
 
 private nonisolated(unsafe) let sharedOutput = WindowEmbedOutput()
 
-final class WindowEmbedOutputTests: XCTestCase {
+@Suite(.serialized)
+struct WindowEmbedOutputTests {
+    @Test
     func testConformsToVideoOutputProtocol() {
         let output: any VideoOutputProtocol = WindowEmbedOutput()
 
-        XCTAssertNotNil(output.windowEmbedHandle)
+        #expect(output.windowEmbedHandle != nil)
     }
 
+    @Test
     func testDistinctInstancesExposeDistinctHandles() {
         let first = WindowEmbedOutput()
         let second = WindowEmbedOutput()
 
-        XCTAssertNotEqual(first.windowEmbedHandle, second.windowEmbedHandle)
+        #expect(first.windowEmbedHandle != second.windowEmbedHandle)
     }
 
+    @Test
     func testHandleMatchesInstancePointer() {
         let output = WindowEmbedOutput()
         let expected = Int64(bitPattern: UInt64(UInt(bitPattern: Unmanaged.passUnretained(output).toOpaque())))
 
-        XCTAssertEqual(output.windowEmbedHandle, expected)
+        #expect(output.windowEmbedHandle == expected)
     }
 
+    @Test
     func testAcceptsUsableDrawableSize() {
         let output = WindowEmbedOutput()
 
         output.drawableSize = CGSize(width: 1920, height: 1080)
 
-        XCTAssertEqual(output.drawableSize, CGSize(width: 1920, height: 1080))
+        #expect(output.drawableSize == CGSize(width: 1920, height: 1080))
     }
 
+    @Test
     func testRejectsDegenerateDrawableSizeKeepingPreviousValue() {
         let output = WindowEmbedOutput()
         output.drawableSize = CGSize(width: 1920, height: 1080)
 
         output.drawableSize = CGSize(width: 1, height: 1)
 
-        XCTAssertEqual(output.drawableSize, CGSize(width: 1920, height: 1080))
+        #expect(output.drawableSize == CGSize(width: 1920, height: 1080))
     }
 
+    @Test
     func testRejectsSizeWithSingleDegenerateWidth() {
         let output = WindowEmbedOutput()
         output.drawableSize = CGSize(width: 1920, height: 1080)
 
         output.drawableSize = CGSize(width: 0, height: 1080)
 
-        XCTAssertEqual(output.drawableSize, CGSize(width: 1920, height: 1080))
+        #expect(output.drawableSize == CGSize(width: 1920, height: 1080))
     }
 
+    @Test
     func testRejectsSizeWithSingleDegenerateHeight() {
         let output = WindowEmbedOutput()
         output.drawableSize = CGSize(width: 1920, height: 1080)
 
         output.drawableSize = CGSize(width: 1920, height: 1)
 
-        XCTAssertEqual(output.drawableSize, CGSize(width: 1920, height: 1080))
+        #expect(output.drawableSize == CGSize(width: 1920, height: 1080))
     }
 
+    @Test
     func testAcceptsSizeWithExactlyTwoPoints() {
         let output = WindowEmbedOutput()
 
         output.drawableSize = CGSize(width: 2, height: 2)
 
-        XCTAssertEqual(output.drawableSize, CGSize(width: 2, height: 2))
+        #expect(output.drawableSize == CGSize(width: 2, height: 2))
     }
 
-    func testExtendedDynamicRangeIsSettableFromBackgroundThread() {
-        let done = expectation(description: "background set")
-
-        DispatchQueue.global().async {
-            sharedOutput.wantsExtendedDynamicRangeContent = true
-            done.fulfill()
+    @Test
+    func testExtendedDynamicRangeIsSettableFromBackgroundThread() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global().async {
+                sharedOutput.wantsExtendedDynamicRangeContent = true
+                continuation.resume()
+            }
         }
 
-        wait(for: [done], timeout: 5)
-        XCTAssertTrue(sharedOutput.wantsExtendedDynamicRangeContent)
+        #expect(sharedOutput.wantsExtendedDynamicRangeContent)
     }
 }

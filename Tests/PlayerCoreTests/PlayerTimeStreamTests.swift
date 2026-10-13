@@ -1,7 +1,9 @@
-import XCTest
+import Testing
 @testable import PlayerCore
 
-final class PlayerTimeStreamTests: XCTestCase {
+@Suite
+struct PlayerTimeStreamTests {
+    @Test
     func testStreamPublishesThrottledUpdates() async {
         let kernel = FakeKernel()
         let model = PlayerTimeModel(interval: 0.5)
@@ -16,11 +18,12 @@ final class PlayerTimeStreamTests: XCTestCase {
         let first = await iterator.next()
         let second = await iterator.next()
         let third = await iterator.next()
-        XCTAssertEqual(first?.currentTime, 0)
-        XCTAssertEqual(second?.currentTime, 0.6)
-        XCTAssertNil(third)
+        #expect(first?.currentTime == 0)
+        #expect(second?.currentTime == 0.6)
+        #expect(third == nil)
     }
 
+    @Test
     func testStreamCarriesDurationAlongsideTime() async {
         let kernel = FakeKernel()
         let model = PlayerTimeModel(interval: 0.25)
@@ -34,11 +37,12 @@ final class PlayerTimeStreamTests: XCTestCase {
         let first = await iterator.next()
         let second = await iterator.next()
         let third = await iterator.next()
-        XCTAssertEqual(first, PlayerTimeUpdate(currentTime: 0, duration: 90))
-        XCTAssertEqual(second, PlayerTimeUpdate(currentTime: 1, duration: 90))
-        XCTAssertNil(third)
+        #expect(first == PlayerTimeUpdate(currentTime: 0, duration: 90))
+        #expect(second == PlayerTimeUpdate(currentTime: 1, duration: 90))
+        #expect(third == nil)
     }
 
+    @Test
     func testStreamIgnoresEventsUnrelatedToTime() async {
         let kernel = FakeKernel()
         let model = PlayerTimeModel(interval: 0.25)
@@ -51,9 +55,10 @@ final class PlayerTimeStreamTests: XCTestCase {
         await kernel.finishEvents()
 
         let update = await iterator.next()
-        XCTAssertNil(update)
+        #expect(update == nil)
     }
 
+    @Test
     func testStreamTerminatesWhenEventStreamFinishes() async {
         let kernel = FakeKernel()
         let model = PlayerTimeModel(interval: 0.25)
@@ -63,6 +68,6 @@ final class PlayerTimeStreamTests: XCTestCase {
         await kernel.finishEvents()
 
         let update = await iterator.next()
-        XCTAssertNil(update)
+        #expect(update == nil)
     }
 }
