@@ -1226,6 +1226,107 @@ public func play() async {
 
 ---
 
+---
+
+## P-050 · 协议的**默认实现**会把"签名写错"变成"什么都没发生"
+
+**现象**：给内核加了日志转发能力，跑起来**一行内核日志都没有**。
+而代码看上去完全正确 —— 调用了、编译过了、运行也不报错。
+
+**根因**：协议要求的是
+
+```swift
+func enableLogging(_ handler: @escaping @Sendable (String) -> Void) async
+```
+
+而我写的是
+
+```swift
+public func enableLogging(level: String = "v", handler: ...)   // ← 多了一个带默认值的参数
+```
+
+**带默认参数的方法不满足单参数要求**（默认值不参与协议匹配）。
+于是编译器**静默选中了协议的默认实现**（`public extension` 里那个空的 no-op），
+我自己的实现**从来没被调用过**。
+
+**判据**：**默认实现是"可选能力"的好工具，但它同时也是"签名写错"的完美掩体。**
+凡是给协议加了默认实现，就要多问一句：**「我这个实现真的被选中了吗？」**
+—— 最省事的验证方式是让实现**自报一行**（这次就是这么抓到的：日志能力自己先打一行 `[mpv/request]`）。
+
+**处置**：签名改成与协议逐字一致；`enableLogging` 里**先自报一行**（含 `handle=ready/pending` 与返回码），
+这样"日志没出来"与"日志通道没打开"不再长得一样。
+
+---
+
+## P-051 · 把"**读不到**"当成"**确定为零**"，守卫会把所有上报挡光
+
+**现象**：网络流播放时界面**永久停在 `.readyToPlay`** —— 而画面尺寸（1280×720）与
+时长（52.2 s）都照报，说明解码是好的，只有**状态**不动。
+
+**根因**（我上一轮自己引入的）：
+
+```swift
+private func isPlaylistEmpty(_ handle: OpaquePointer) -> Bool {
+    (getInt64(handle, "playlist-count") ?? 0) == 0     // ← `?? 0`
+}
+```
+
+这个函数是 `emitPauseState()` 的**守卫**。`?? 0` 把"**属性读不到**"变成了"**确定播放列表为空**"，
+于是守卫判定"没有东西可以被 pause"而**直接 return** ⇒ 播放/暂停状态**再也不会被上报**。
+
+**判据**：**"不确定"必须与"确定为零"分开处理。**
+一个**守卫**遇到不确定时应当**放行**（保守做法是继续尝试），
+而不是把不确定解释成"条件不满足" —— 后者会让一条正常的路径**彻底静默**。
+
+**处置**：读失败时返回 `false`（不阻断）：
+
+```swift
+guard let count = getInt64(handle, "playlist-count") else { return false }
+```
+
+> 与 `P-049` 同族但**更深一层**：那条是"命令前提不满足时静默 return"，
+> 这条是"**守卫把一个本可行的路径误判成前提不满足**"。
+> 共同点：**失败路径必须可见，而不是被一个默认值抹平。**
+
+---
+
+## P-052 · **验证环境的能力缺口**会伪装成产品缺陷
+
+**现象**：`mpv` 直连 `http://127.0.0.1:8765/xxx.mp4`（宿主 `python3 -m http.server`），
+状态序列是 `playing → paused → finished`，**14 毫秒内"播完了"**，`currentTime` 一直是 0。
+
+**差点走错的方向**：去改我们的代码（加 `--force-seekable`、改 EOF 判定、怀疑 `PlaybackEndReason`）。
+
+**日志给的原话**（这就是为什么必须有 `P-050` 那条通道）：
+
+```
+[mpv/demux] Stream is not seekable.
+[mpv/ffmpeg] Cannot seek backward in linear streams!
+[mpv/ffmpeg/demuxer] mov,mp4,...: stream 0, offset 0x30: partial file
+[mpv/lavf] EOF reached.
+[mpv/cplayer] got EOF with no data before it      ← 一个包都没读到就 "EOF"
+[mpv/cplayer] You can force it with '--force-seekable=yes'.
+```
+
+`python -m http.server` **不支持 Range 请求**（连 `Accept-Ranges` 都不发）⇒
+流被判为**不可 seek 的线性流** ⇒ 而 **mp4 的索引（moov）需要回退读取** ⇒
+一个包都读不到就"EOF"⇒ 界面诚实地显示"播完了"。
+
+**判据**：**服务器不支持 Range 是"测试环境缺了一项能力"，不是"我们的播放器坏了"。**
+真实的 CDN 都支持 Range。**为了让测试通过去改产品，会把一个环境局限固化成产品行为**
+（比如 `force-seekable=yes` 会让 mpv 把整个流缓存进内存 —— 为小文件换来的"能播"，
+代价是大文件的几十上百 MB 常驻）。
+
+**处置**：新增 `Tools/serve-range.py`（支持 Range 的极简服务器，**替代 `python -m http.server`**）。
+换上去之后立刻正常：`playing` → 时间推进到 **19.25 / 52.21 s** → server 侧 8 次 range 请求。
+**一行产品代码都没改。**
+
+> ⚠️ 但**不把这条当成"产品无需改进"**：确有简陋的 HTTP 服务器不支持 Range。
+> 若要兼容它们，`force-seekable=yes` 是一个**有代价的选项**（内存），
+> 已登记为 `docs/03` 里的**待决策项**，而不是顺手加上。
+
+---
+
 > ### 与既有条目同源、故不重复展开的（仅登记映射，便于日后合并检索）
 >
 > | 其他项目的条目 | 本项目已有 |

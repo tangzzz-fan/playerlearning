@@ -67,6 +67,13 @@ xcrun simctl launch --console <udid> com.playerstack.demo -exerciseControls -tra
 xcrun simctl launch --console <udid> com.playerstack.demo -soakRounds 30
 #   ⇒ [soak] round N/30 · t=… · footprint=… MB · state=idle
 #   180 轮 ≈ 30 min（`M3` 门槛那个量级）。判据：**单调线性 = 泄漏；阶梯后持平 = 预热**。
+
+# ⑥ 网络点播验证（**必须用支持 Range 的服务器**，见 P-052）
+python3 Tools/serve-range.py --port 8765 --root /tmp/vidprobe2     # 一个终端
+xcrun simctl launch --console <udid> com.playerstack.demo \
+  -directURL http://127.0.0.1:8765/sintel_trailer-720p.mp4 -traceUpdates
+#   ⚠️ 别用 `python -m http.server`：它不支持 Range ⇒ mp4 会"14 毫秒就播完"，
+#      那是**环境缺口**而不是产品缺陷。`-traceUpdates` 会同时打开**内核自己的日志**。
 ```
 
 > **构建/测试环境（沙箱逃逸、挑模拟器、toybox shim）用现成的技能，别在项目里再包一层：**
