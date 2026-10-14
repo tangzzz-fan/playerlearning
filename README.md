@@ -56,6 +56,12 @@ cd MPV && xcodebuild -scheme PlayerMPV -destination 'platform=iOS Simulator' bui
 cd Demo && xcodegen generate           # 新增源文件后必须重跑（P-030）；.xcodeproj 不入 git
 xcodebuild -project PlayerStackDemo.xcodeproj -scheme PlayerStackDemo \
   -destination 'platform=iOS Simulator' build
+
+# ④ 播放控制回归（`-exerciseControls` 跑「加载 → 播 → 停 → 再播」，逐拍打点）
+xcrun simctl launch --console <udid> com.playerstack.demo -exerciseControls -traceUpdates
+#   ⇒ [exercise] loaded→playing / stopped→idle / replayed→playing
+#   ⚠️ 它证明"控制链路 + 内核语义"是通的；**不能**证明手指有没有点到按钮上 ——
+#      点击本身无法自动化（UI 测试已按决定移除），那件事只能真机手测。
 ```
 
 > **构建/测试环境（沙箱逃逸、挑模拟器、toybox shim）用现成的技能，别在项目里再包一层：**
