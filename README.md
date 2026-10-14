@@ -62,6 +62,11 @@ xcrun simctl launch --console <udid> com.playerstack.demo -exerciseControls -tra
 #   ⇒ [exercise] loaded→playing / stopped→idle / replayed→playing
 #   ⚠️ 它证明"控制链路 + 内核语义"是通的；**不能**证明手指有没有点到按钮上 ——
 #      点击本身无法自动化（UI 测试已按决定移除），那件事只能真机手测。
+
+# ⑤ 长跑稳定性（每轮走完 load→play→seek→pause→play→stop，逐轮打点内存）
+xcrun simctl launch --console <udid> com.playerstack.demo -soakRounds 30
+#   ⇒ [soak] round N/30 · t=… · footprint=… MB · state=idle
+#   180 轮 ≈ 30 min（`M3` 门槛那个量级）。判据：**单调线性 = 泄漏；阶梯后持平 = 预热**。
 ```
 
 > **构建/测试环境（沙箱逃逸、挑模拟器、toybox shim）用现成的技能，别在项目里再包一层：**

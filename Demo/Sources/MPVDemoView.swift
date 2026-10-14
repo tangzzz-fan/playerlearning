@@ -41,15 +41,58 @@ final class PlayerDemoModel {
 
     func start() async {
         await player.start()
-        if traces {
+        if traces || soakRounds != nil {
             startMemorySampling()
         }
-        if ProcessInfo.processInfo.arguments.contains("-exerciseControls") {
+        if let rounds = soakRounds {
+            await soakTest(rounds: rounds)
+        } else if ProcessInfo.processInfo.arguments.contains("-exerciseControls") {
             await exerciseControls()
         } else if ProcessInfo.processInfo.arguments.contains("-autoLoadSample") {
             await loadSample()
             await player.play()
         }
+    }
+
+    /// `-soakRounds <n>`：长跑/循环稳定性（每轮 ≈ 10 s）。
+    ///
+    /// 为什么需要它：此前**所有**验证都在 5–52 秒的量级上做的。
+    /// 而播放器最容易出问题的场景恰恰是**反复加载、反复 seek、长时间不停**：
+    /// 内存是否单调增长、解码/音频线程有没有堆积、`AsyncStream` 的消费者有没有泄漏。
+    /// **这类问题在 1 分钟里完全看不出来** —— 它们需要"次数"和"时间"才显形。
+    ///
+    /// 每轮刻意把**所有控制路径**都走一遍（load → play → seek → pause → play → stop），
+    /// 因为泄漏往往藏在某一条具体路径上，只播不切是测不到的。
+    private var soakRounds: Int? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-soakRounds"), index + 1 < arguments.count else { return nil }
+        return Int(arguments[index + 1])
+    }
+
+    private func soakTest(rounds: Int) async {
+        Self.writeToStderr("[soak] start rounds=\(rounds)")
+        for round in 1 ... rounds {
+            await loadSample()
+            await player.play()
+            try? await Task.sleep(for: .seconds(4))
+
+            await player.seek(to: 20)
+            try? await Task.sleep(for: .seconds(2))
+
+            await player.pause()
+            try? await Task.sleep(for: .seconds(1))
+            await player.play()
+            try? await Task.sleep(for: .seconds(2))
+
+            await player.stop()
+            try? await Task.sleep(for: .seconds(1))
+
+            let footprint = MemoryFootprint.megabytes().map { String(format: "%.1f", $0) } ?? "?"
+            Self.writeToStderr(
+                "[soak] round \(round)/\(rounds) · t=\(Self.stamp(at: origin)) · footprint=\(footprint) MB · state=\(player.state)"
+            )
+        }
+        Self.writeToStderr("[soak] done")
     }
 
     /// 把「加载 → 播 → 停 → 再播」跑一遍并逐拍打点。
