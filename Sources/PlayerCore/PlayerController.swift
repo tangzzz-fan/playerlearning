@@ -113,6 +113,13 @@ public actor PlayerController {
         await setSubtitleDelay(subtitles.delay + delta)
     }
 
+    /// 转发"打开内核日志"这个请求。
+    ///
+    /// 内核不支持时是 **no-op**（协议给了默认实现）—— 装配层与界面不必判断"这个内核会不会吐日志"。
+    public func enableKernelLogging(_ handler: @escaping @Sendable (String) -> Void) async {
+        await kernel.enableLogging(handler)
+    }
+
     public func finishUpdates() {
         endUpdates()
     }

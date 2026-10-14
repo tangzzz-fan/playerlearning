@@ -44,14 +44,45 @@ final class PlayerDemoModel {
         if traces || soakRounds != nil {
             startMemorySampling()
         }
+        if traces {
+            // `-traceUpdates` 同时打开**内核自己的日志**：网络流为什么没播起来、
+            // 编码为什么解不开 —— 这些从我们的状态机里看不出来（我们只看到"它说 EOF 了"）。
+            await player.enableKernelLogging { line in
+                FileHandle.standardError.write(Data((line + "\n").utf8))
+            }
+        }
         if let rounds = soakRounds {
             await soakTest(rounds: rounds)
         } else if ProcessInfo.processInfo.arguments.contains("-exerciseControls") {
             await exerciseControls()
+        } else if let direct = directURL, let url = URL(string: direct) {
+            await loadDirect(url)
         } else if ProcessInfo.processInfo.arguments.contains("-autoLoadSample") {
             await loadSample()
             await player.play()
         }
+    }
+
+    /// `-directURL <url>`：把 URL **直接交给播放器**（不经过下载与缓存）。
+    ///
+    /// ⚠️ 与 `-sampleURL` 的区别是本质的，不是方便与否：
+    /// `-sampleURL` 走 `SampleClipProvider` —— 它用 **URLSession 下载到本地再播**，
+    /// 那条路径验证的是**下载**，而 `mpv` 收到的一直是一个本地文件。
+    /// 要验证 **mpv 自己的网络流**（HTTP 协议栈、缓存策略、弱网行为），
+    /// 必须把 `http://` URL **原样交给它**。
+    /// 没有这条入口时，「网络点播」这件事在验证里是**缺席**的。
+    private var directURL: String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-directURL"), index + 1 < arguments.count else { return nil }
+        return arguments[index + 1]
+    }
+
+    /// 直连播放。**不做任何下载/缓存**，把 URL 原样给内核。
+    func loadDirect(_ url: URL) async {
+        note = "直连：\(url.absoluteString)"
+        Self.writeToStderr("[direct] url=\(url.absoluteString)")
+        await player.load(PlayerResource(url: url))
+        await player.play()
     }
 
     /// `-soakRounds <n>`：长跑/循环稳定性（每轮 ≈ 10 s）。

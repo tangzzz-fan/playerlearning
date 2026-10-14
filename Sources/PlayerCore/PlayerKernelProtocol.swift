@@ -19,4 +19,17 @@ public protocol PlayerKernelProtocol: Sendable {
 
     func events() async -> AsyncStream<PlayerKernelEvent>
     func snapshot() async -> PlayerKernelSnapshot
+
+    /// **可选能力**：转发内核自己的日志（诊断用）。
+    ///
+    /// 协议里**给默认实现**（什么都不做），而不是把它做成必需项：
+    /// "能不能吐日志"是**内核特有的**（libmpv 用 `mpv_request_log_messages`，
+    /// 别的内核机制完全不同）。做成必需项就会逼每个替代实现都写一个空方法 ——
+    /// 那是**假装支持**。可选的语义应该是「不实现 = 不支持」，而不是「不实现 = 编译不过」。
+    func enableLogging(_ handler: @escaping @Sendable (String) -> Void) async
+}
+
+public extension PlayerKernelProtocol {
+    /// 默认：不支持内核日志。**静默 no-op**（调用方不该关心谁支持）。
+    func enableLogging(_ handler: @escaping @Sendable (String) -> Void) async {}
 }

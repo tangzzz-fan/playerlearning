@@ -100,6 +100,15 @@ public final class PlayerViewModel {
         return naturalSize.width / naturalSize.height
     }
 
+    /// 打开内核自己的日志（排查用，见 `PlayerKernelProtocol` 之外的 `MPVKernel.enableLogging`）。
+    ///
+    /// ⚠️ 它**刻意不放进 `PlayerKernelProtocol`**：那是所有内核都要满足的契约，
+    /// 而"转发内核日志"是**内核特有的诊断能力**（不同内核的日志机制完全不同）。
+    /// 为了让它进协议而给协议加一个 `FakeKernel` 也要假装实现的成员，是本末倒置。
+    public func enableKernelLogging(_ handler: @escaping @Sendable (String) -> Void) async {
+        await controller.enableKernelLogging(handler)
+    }
+
     public func start() async {
         endUpdates()
         let updates = await controller.start()
