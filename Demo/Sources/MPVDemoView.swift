@@ -44,10 +44,33 @@ final class PlayerDemoModel {
         if traces {
             startMemorySampling()
         }
-        if ProcessInfo.processInfo.arguments.contains("-autoLoadSample") {
+        if ProcessInfo.processInfo.arguments.contains("-exerciseControls") {
+            await exerciseControls()
+        } else if ProcessInfo.processInfo.arguments.contains("-autoLoadSample") {
             await loadSample()
             await player.play()
         }
+    }
+
+    /// 把「加载 → 播 → 停 → 再播」跑一遍并逐拍打点。
+    ///
+    /// 为什么需要它：**点击本身没法自动化**（UI 自动化测试已按董事长决定移除），
+    /// 但"点了没反应"正是本轮要修的观感 —— 只靠单测不足以证明真机路径通了。
+    /// 这里走的是与按钮**完全相同**的 action（`player.stop()` / `player.play()`），
+    /// 所以能证"控制链路 + 内核语义"在真实 libmpv 上是通的；
+    /// **不能**证明的只有一件事：手指有没有点到按钮上。
+    private func exerciseControls() async {
+        await loadSample()
+        try? await Task.sleep(for: .seconds(3))
+        Self.writeToStderr("[exercise] loaded → \(player.state) canPlay=\(player.canPlay) canStop=\(player.canStop)")
+
+        await player.stop()
+        try? await Task.sleep(for: .seconds(2))
+        Self.writeToStderr("[exercise] stopped → \(player.state) canPlay=\(player.canPlay) canStop=\(player.canStop)")
+
+        await player.play()
+        try? await Task.sleep(for: .seconds(3))
+        Self.writeToStderr("[exercise] replayed → \(player.state) t=\(String(format: "%.2f", player.currentTime))")
     }
 
     func teardown() async {
@@ -121,11 +144,16 @@ struct MPVDemoView: View {
                 HStack(spacing: 8) {
                     Button("样例") { Task { await demo.loadSample() } }
                         .accessibilityIdentifier("demo.loadSample")
+                    // 三个按钮都跟着播放器的可用性走：没加载过文件时它们**本来就无效**
+                    // （内核句柄尚未创建），灰掉比"点了没反应"诚实。
                     Button("停止") { Task { await demo.player.stop() } }
+                        .disabled(!demo.player.canStop)
                         .accessibilityIdentifier("demo.stop")
                     Button("−10s") { Task { await demo.player.skip(by: -10) } }
+                        .disabled(!demo.player.canSkip)
                         .accessibilityIdentifier("demo.back10")
                     Button("+10s") { Task { await demo.player.skip(by: 10) } }
+                        .disabled(!demo.player.canSkip)
                         .accessibilityIdentifier("demo.forward10")
 
                     Text(demo.note)

@@ -233,6 +233,94 @@ struct PlayerViewModelTests {
         await model.teardown()
         await kernel.finishEvents()
     }
+
+    // MARK: - 播放控制的可用性
+    //
+    // 这一组对应实测反馈"点播放/停止没反应"。真因是：**未加载文件时内核连 mpv 句柄
+    // 都还没创建**，`play()` / `pause()` / `stop()` 全部在 `guard let handle = owner?.pointer`
+    // 处静默 return —— 不报错、不改变任何状态。唯一的办法是让界面**如实表达"现在不能按"**。
+
+    @Test
+    func testPlaybackControlsAreDisabledBeforeAnyLoad() async {
+        let (model, kernel) = await makeModel()
+
+        #expect(!model.canPlay, "没加载过文件 ⇒ 播放按钮必须灰掉，而不是点了没反应")
+        #expect(!model.canStop)
+        #expect(!model.canSkip)
+        #expect(!model.hasLoadedResource)
+
+        await model.teardown()
+        await kernel.finishEvents()
+    }
+
+    @Test
+    func testPlaybackControlsBecomeAvailableAfterLoad() async {
+        let (model, kernel) = await makeModel()
+        await model.load(PlayerResource(url: URL(fileURLWithPath: "/tmp/sample.mkv")))
+
+        #expect(model.hasLoadedResource)
+        #expect(model.canPlay)
+
+        // ⚠️ `canStop` 还取决于状态，而状态是**经事件流异步**送到装配层的
+        //    （`load` 里 emit 的 `.preparing`）。不等它落地就断言，测的是"事件跑得够不够快"。
+        try? await Task.sleep(for: .milliseconds(60))
+        #expect(model.canStop, "加载之后「停止」才有意义，实际状态：\(model.state)")
+
+        await model.teardown()
+        await kernel.finishEvents()
+    }
+
+    /// 停止之后：停止按钮失去意义，但**播放按钮必须仍然可用** ——
+    /// 内核侧 `play()` 会把上一个文件重新放回播放列表（「停止 → 播放」= 从头再播）。
+    @Test
+    func testStopDisablesStopButKeepsPlayAvailable() async {
+        let (model, kernel) = await makeModel()
+        await model.load(PlayerResource(url: URL(fileURLWithPath: "/tmp/sample.mkv")))
+        await kernel.emit(.stateChanged(.preparing))
+        await kernel.emit(.stateChanged(.readyToPlay))
+        await kernel.emit(.stateChanged(.playing))
+        try? await Task.sleep(for: .milliseconds(60))
+        #expect(model.canStop)
+
+        await model.stop()
+        try? await Task.sleep(for: .milliseconds(60))
+
+        #expect(model.state == .idle)
+        #expect(!model.canStop, "已经停了，再点停止没有变化可看")
+        #expect(model.canPlay, "但还能再播 —— 内核会重新加载上一个文件")
+
+        await model.teardown()
+        await kernel.finishEvents()
+    }
+
+    @Test
+    func testSkipRequiresKnownDuration() async {
+        let (model, kernel) = await makeModel()
+        await model.load(PlayerResource(url: URL(fileURLWithPath: "/tmp/sample.mkv")))
+
+        #expect(!model.canSkip, "时长未知 ⇒ 快进快退不知道该跳到哪")
+
+        await kernel.emit(.durationChanged(120))
+        try? await Task.sleep(for: .milliseconds(60))
+        #expect(model.canSkip)
+
+        await model.teardown()
+        await kernel.finishEvents()
+    }
+
+    /// 没有视频时挂字幕是无处可挂的 —— 必须**明说**，而不是让用户选完文件发现没反应。
+    @Test
+    func testLoadingSubtitleBeforeVideoExplainsItself() async {
+        let (model, kernel) = await makeModel()
+
+        await model.loadSubtitle(from: URL(fileURLWithPath: "/tmp/whatever.srt"))
+
+        let note = model.subtitleNote ?? "nil"
+        #expect(note.contains("先打开一个视频"), "实际提示：\(note)")
+
+        await model.teardown()
+        await kernel.finishEvents()
+    }
 }
 
 private struct StubFailure: Error {}

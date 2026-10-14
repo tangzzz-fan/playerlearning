@@ -127,6 +127,9 @@ struct PlayerViewModelChromeTests {
         try Data("1\n00:00:01,000 --> 00:00:02,000\n中文\n".utf8).write(to: source)
         defer { try? FileManager.default.removeItem(at: source) }
 
+        // ⚠️ 必须先有视频：没有文件时挂字幕是无处可挂的（内核连句柄都没建），
+        //    `loadSubtitle` 会明确拒绝并给出提示 —— 那是另一条用例（`PlayerViewModelTests`）。
+        await model.load(PlayerResource(url: URL(fileURLWithPath: "/tmp/sample.mkv")))
         await model.loadSubtitle(from: source)
 
         let added = await kernel.addedSubtitles

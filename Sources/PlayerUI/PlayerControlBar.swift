@@ -21,6 +21,11 @@ public struct PlayerControlBar: View {
     private let duration: Double
     private let progress: Double
     private let canScrub: Bool
+    /// 播放控制是否可用（= 已经加载过文件）。
+    ///
+    /// 未加载时 `play()` / `pause()` / 字幕命令在内核层都是**静默 return**
+    /// （连 mpv 句柄都还没建）⇒ 只有把它们**灰掉**，用户才不会以为界面坏了。
+    private let canControl: Bool
     private let isFullscreen: Bool
 
     private let subtitleLabel: String
@@ -49,6 +54,7 @@ public struct PlayerControlBar: View {
         duration: Double,
         progress: Double,
         canScrub: Bool,
+        canControl: Bool,
         isFullscreen: Bool,
         subtitleLabel: String,
         isSubtitleDisplaying: Bool,
@@ -71,6 +77,7 @@ public struct PlayerControlBar: View {
         self.duration = duration
         self.progress = progress
         self.canScrub = canScrub
+        self.canControl = canControl
         self.isFullscreen = isFullscreen
         self.subtitleLabel = subtitleLabel
         self.isSubtitleDisplaying = isSubtitleDisplaying
@@ -101,7 +108,11 @@ public struct PlayerControlBar: View {
             .padding(.horizontal, 12)
 
             HStack(spacing: 4) {
-                iconButton("playPause", systemImage: isPlaying ? "pause.fill" : "play.fill") {
+                iconButton(
+                    "playPause",
+                    systemImage: isPlaying ? "pause.fill" : "play.fill",
+                    isEnabled: canControl
+                ) {
                     onTogglePlay()
                 }
 
@@ -155,6 +166,7 @@ public struct PlayerControlBar: View {
     private func iconButton(
         _ identifier: String,
         systemImage: String,
+        isEnabled: Bool = true,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -164,6 +176,9 @@ public struct PlayerControlBar: View {
                 .contentShape(Rectangle())
         }
         .foregroundStyle(.white)
+        .disabled(!isEnabled)
+        // `.disabled` 在视频画面上不够明显（系统那点变灰看不出来）⇒ 再压一层透明度。
+        .opacity(isEnabled ? 1 : 0.35)
         .accessibilityIdentifier("player.\(identifier)")
     }
 
@@ -209,9 +224,12 @@ public struct PlayerControlBar: View {
                 .contentShape(Rectangle())
         }
         .foregroundStyle(.white)
+        // 没有文件时没有东西可以挂字幕 —— 灰掉，而不是让用户选完发现没反应。
+        .disabled(!canControl)
+        .opacity(canControl ? 1 : 0.35)
         .accessibilityIdentifier("player.subtitles")
         // 菜单的**可读标签**要如实说出状态，不能只画一个图标糊过去。
-        .accessibilityLabel(subtitleLabel)
+        .accessibilityLabel(canControl ? subtitleLabel : "字幕（先打开视频）")
     }
 
     /// `mm:ss`（超过一小时给 `h:mm:ss`）。负数 / 非有限值一律显示 `0:00` ——

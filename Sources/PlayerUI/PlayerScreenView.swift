@@ -100,6 +100,7 @@ public struct PlayerScreenView: View {
                 duration: model.duration,
                 progress: model.displayProgress,
                 canScrub: model.canScrub,
+                canControl: model.canPlay,
                 isFullscreen: model.fullscreen.hidesHostChrome,
                 subtitleLabel: model.subtitles.label,
                 isSubtitleDisplaying: model.subtitles.isDisplaying,
@@ -144,6 +145,11 @@ public struct PlayerScreenView: View {
     private var statusText: String {
         if let failure = model.loadFailure {
             return "加载失败：\(failure)"
+        }
+        // 还没加载过文件时，最该告诉用户的**不是"状态是 idle"，而是"为什么按钮按不动"**。
+        // 这一行直接对应"点了播放没反应"的观感：内核还没建句柄，所有控制命令都是静默 return。
+        if !model.hasLoadedResource {
+            return "未加载文件 · 点右侧文件夹图标选视频"
         }
         let size = model.naturalSize
         let video = size.width > 0 ? "\(Int(size.width))×\(Int(size.height))" : "—"

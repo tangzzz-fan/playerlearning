@@ -21,6 +21,15 @@ public final class PlayerViewModel {
     /// 加载失败的原因（给人看的一行字）。`nil` 表示没失败。
     public private(set) var loadFailure: String?
 
+    /// 是否成功加载过资源。
+    ///
+    /// **它决定控制按钮能不能按**，因为"没加载过"时所有播放控制的调用都是**静默失败**的：
+    /// 内核连 mpv 句柄都还没创建（`owner == nil`），`play()` / `pause()` / `stop()` 全部直接 return。
+    /// 症状是**"点了没反应，也不报错"** —— 用户只会以为界面坏了。
+    ///
+    /// 与其让他对着一个不动的按钮猜，不如让它**看起来就不能按**。
+    public private(set) var hasLoadedResource = false
+
     /// 诊断挂钩：把**原始**更新原样吐出去。端到端脚本与 UI 测试靠它判断真实时序
     /// （而不是靠截屏猜）。默认 `nil`，**不参与任何播放决策**。
     public var onUpdate: (@MainActor (PlayerControllerUpdate) -> Void)?
@@ -47,6 +56,15 @@ public final class PlayerViewModel {
     }
 
     public var isPlaying: Bool { state == .playing }
+
+    /// 能不能播/暂停。**没加载过文件时为 `false`** —— 理由见 `hasLoadedResource`。
+    public var canPlay: Bool { hasLoadedResource }
+
+    /// 能不能停。已经在 `.idle` 时没必要停（停了也没有变化可看）。
+    public var canStop: Bool { hasLoadedResource && state != .idle }
+
+    /// 能不能快进/快退。
+    public var canSkip: Bool { hasLoadedResource && duration > 0 }
 
     /// 当前持有安全作用域访问权的文件 URL（`nil` = 没有）。
     /// 只读窗口：**没有它，"换文件时有没有申请/释放访问权"就是不可验证的**
@@ -149,6 +167,11 @@ public final class PlayerViewModel {
     /// 加载一条外挂字幕：读 → 解编码 → 以 UTF-8 另存 → 交给内核。
     /// 失败时**如实报出来**，不静默（否则用户只会看到"字幕没反应"）。
     public func loadSubtitle(from url: URL) async {
+        // 没有文件时挂字幕是无处可挂的（内核连句柄都没建）⇒ 明说，别让它静默失败。
+        guard hasLoadedResource else {
+            subtitleNote = "先打开一个视频，再加载字幕"
+            return
+        }
         do {
             let prepared = try SubtitleLoader.prepare(url: url)
             subtitleNote = prepared.summary
@@ -168,6 +191,8 @@ public final class PlayerViewModel {
         }
         do {
             try await controller.load(resource)
+            // 命令发出去了就记下来 —— 之后 `play()` 才有东西可以"重新放回去"。
+            hasLoadedResource = true
         } catch {
             loadFailure = String(describing: error)
         }
