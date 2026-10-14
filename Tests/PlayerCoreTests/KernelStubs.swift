@@ -18,6 +18,14 @@ actor KernelStub<Tag>: PlayerKernelProtocol {
 
     func seek(to seconds: Double) async {}
 
+    func addSubtitle(url: URL, title: String?) async {}
+
+    func selectSubtitleTrack(id: Int64?) async {}
+
+    func setSubtitleVisible(_ visible: Bool) async {}
+
+    func setSubtitleDelay(_ seconds: Double) async {}
+
     func events() async -> AsyncStream<PlayerKernelEvent> {
         AsyncStream { _ in }
     }

@@ -77,6 +77,12 @@ final class PlayerDemoModel {
         // 那正是 `P-034` 的形态（没被执行的事返回绿）。所以让门禁看得见它。
         Self.writeToStderr("[sample] source=\(clip.source.rawValue) bytes=\(bytes) path=\(clip.url.path)")
         await player.load(PlayerResource(url: clip.url))
+
+        // 同名 sidecar 字幕（`flower.srt` / `flower.ass`）自动挂上 —— 与真实播放器一致。
+        if let subtitle = SampleClipProvider.sidecarSubtitle(for: clip) {
+            await player.loadSubtitle(from: subtitle)
+            Self.writeToStderr("[sample] subtitle=\(subtitle.lastPathComponent)")
+        }
     }
 
     private func startMemorySampling() {

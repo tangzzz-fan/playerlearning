@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 public actor PlayerController {
     private let kernel: any PlayerKernelProtocol
@@ -7,6 +8,7 @@ public actor PlayerController {
     private var isBuffering = false
     private var naturalSize: CGSize = .zero
     private var audio = PlayerAudioState()
+    private var subtitles = PlayerSubtitleState()
     private var continuation: AsyncStream<PlayerControllerUpdate>.Continuation?
     private var pump: Task<Void, Never>?
 
@@ -41,7 +43,8 @@ public actor PlayerController {
             duration: time.duration,
             isBuffering: isBuffering,
             naturalSize: naturalSize,
-            audio: audio
+            audio: audio,
+            subtitles: subtitles
         )
     }
 
@@ -63,6 +66,51 @@ public actor PlayerController {
 
     public func seek(to seconds: Double) async {
         await kernel.seek(to: time.clampSeekTarget(seconds))
+    }
+
+    /// 加一条外挂字幕。**`title` 传文件名**：内核拿不到更友好的名字，界面上也总得有个字。
+    public func addSubtitle(url: URL, title: String? = nil) async {
+        await kernel.addSubtitle(url: url, title: title ?? url.lastPathComponent)
+    }
+
+    public func selectSubtitleTrack(id: Int64?) async {
+        await kernel.selectSubtitleTrack(id: id)
+    }
+
+    /// 可见性：**本地先生效，再以内核回执为准**。
+    ///
+    /// 这与 `play()/pause()` 的处理**相反**，理由是两者性质不同：
+    /// `pause` 可能被内核**拒绝**（缓存中 / EOF / `keep-open` 都会让它自己改主意）⇒ 乐观上报会说谎；
+    /// 而 `sub-visibility` 是一个无条件生效的可设置属性，**我们知道自己发下去的是什么**。
+    /// 本地先生效换来的是：连续点击不会被几百微秒的回执延迟吃掉，
+    /// 而一旦内核回执不同（例如被钳制），它会覆盖本地值 —— **自我纠正**。
+    public func setSubtitleVisible(_ visible: Bool) async {
+        guard subtitles.isVisible != visible else { return }
+        await kernel.setSubtitleVisible(visible)
+        subtitles.isVisible = visible
+        continuation?.yield(.subtitlesChanged(subtitles))
+    }
+
+    /// 开关取反。**当前状态由控制器持有**（它消费内核事件），所以这个判断不放在界面层。
+    public func toggleSubtitleVisibility() async {
+        await setSubtitleVisible(!subtitles.isVisible)
+    }
+
+    /// 延迟：**钳制在这里做**（目标区间属于模型知识），内核只管执行。
+    ///
+    /// 本地即时生效的理由与 `setSubtitleVisible` 相同，但在**相对**调整上更硬：
+    /// 若每次都等回执，连点 `+0.5 s` 五次会全部基于同一个陈旧值计算 ⇒
+    /// **用户按了五下，字幕只挪了 0.5 秒**。那不是延迟不准，是操作丢失。
+    public func setSubtitleDelay(_ seconds: Double) async {
+        let clamped = SubtitleTimeline.normalizeDelay(seconds)
+        guard clamped != subtitles.delay else { return }
+        await kernel.setSubtitleDelay(clamped)
+        subtitles.delay = clamped
+        continuation?.yield(.subtitlesChanged(subtitles))
+    }
+
+    public func adjustSubtitleDelay(by delta: Double) async {
+        await setSubtitleDelay(subtitles.delay + delta)
     }
 
     public func finishUpdates() {
@@ -89,6 +137,10 @@ public actor PlayerController {
             guard state != audio else { return }
             audio = state
             continuation?.yield(.audioChanged(state))
+        case .subtitlesChanged(let state):
+            guard state != subtitles else { return }
+            subtitles = state
+            continuation?.yield(.subtitlesChanged(state))
         }
     }
 

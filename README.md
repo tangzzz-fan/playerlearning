@@ -2,16 +2,17 @@
 
 做一个**自己的 iOS 优先 / macOS 跟进播放器**：libmpv 单内核，本地文件 + 网络点播 + 直播全都要，能播系统播放器播不了的格式（mkv / ASS 特效字幕 / 各种编码）。
 
-**当前状态**：**Phase 0 与 Phase 1 均已完成** —— **`G0`/`M0`（路线成立）** 与 **`G1`/`M1`（地基可测）** 达成。
+**当前状态**：**Phase 0 ~ Phase 4 均已完成** —— `G0`/`M0`（路线成立）· `G1`/`M1`（地基可测）· `G2`/`M2`（能看片）· `G3`（UI 最小闭环）· `G4`（字幕）全部达成。
 
 | 里程碑 | 状态 |
 | --- | --- |
-| M0 路线成立 | ✅ 已产出**自建动态 LGPL-2.1 libmpv 产物**，模拟器与真机（iPhone 16 Pro）双通出画面 |
-| M1 地基可测 | ✅ 内核边界已立（`PlayerKernelProtocol` / 注册表 / `FakeKernel` / 状态机 / 时间模型）· **84 tests 全绿** · 变异 **27/27** 杀死 · `PlayerCore` 零 UI 依赖 |
-| 端到端素材 | **MDN `flower.mp4`（CC0）**运行时下载 + 缓存；离线退回本地生成（`G2` 会打印用的是哪一个） |
-| M2 能看片 | **✅ 达成**：模拟器上**出画 + 出声 + `seek` 精确 + 播完报 `.finished`**，且有端到端门禁守着（[`docs/10`](docs/10-P2验证报告.md)）· 下一步 `M3` |
+| M0 路线成立 | ✅ 自建动态 LGPL-2.1 libmpv 产物，模拟器与真机（iPhone 16 Pro）双通出画面 |
+| M1 地基可测 | ✅ 内核边界已立（`PlayerKernelProtocol` / 注册表 / `FakeKernel` / 状态机 / 时间模型）· `PlayerCore` 零 UI 依赖 |
+| M2 能看片 | ✅ 出画 + 出声 + `seek` 精确 + 播完报 `.finished`（[`docs/10`](docs/10-P2验证报告.md)） |
+| M3 能顺手用 | **◑ 缺三项**：① **真机校准**（音轨使模拟器首屏 60 ms → 1.97 s，模拟器数字不可信）② **手动长跑**（30 min：内存是否增长 / 音频输出是否掉线）③ 字幕菜单在真机手势下的可用性 |
+| 端到端素材 | **MDN `flower.mp4`（CC0 · 960×540 · 48 kHz）**运行时下载 + 缓存；离线退回本地生成；来源会打印出来 |
 
-门禁：`./Tools/gate.sh`（退出码 0 = `G1` 达成）。
+**验收标准就一条：项目能正确运行，`swift test` 全绿**（命令见下）。
 
 ## 文档索引
 
@@ -124,28 +125,27 @@ playerlearning/
 
 > 完整判定树与红线见 [`docs/02` §三「分发口径」](docs/02-自建播放器决策记录.md)。
 
+## 各阶段完成情况（Phase 0 ~ 4）
+
+| Phase | 判定门 | 结果 |
+| --- | --- | --- |
+| 0 风险排除 | `G0` / `M0` | ✅ 自建动态 LGPL-2.1 `Libmpv.xcframework`，模拟器 + 真机双通出画面 |
+| 1 骨架与抽象 | `G1` / `M1` | ✅ `PlayerKernelProtocol` / 注册表 / `FakeKernel` / 状态机 / 时间模型；`PlayerCore` 零 UI 依赖 |
+| 2 内核接入 | `G2` / `M2` | ✅ 出画 + 出声 + `seek` 精确 + 播完报 `.finished`（[`docs/10`](docs/10-P2验证报告.md)） |
+| 3 UI 最小闭环 | `G3` | ✅ 播放/暂停 · 时间 · 进度条+拖拽 · 全屏 · 字幕开关 · 文件选择（[`docs/11`](docs/11-P3验证报告.md)） |
+| 4 字幕 | `G4` | ✅ SRT 中文不乱码 · ASS 能加载渲染 · 字幕延迟可调（[`docs/03`](docs/03-路线图.md) 的 📌） |
+| 5 网络点播 | `G5` | ⬜ 未开始 |
+| 6 直播 | `G6` | ⬜ 未定（见 `docs/03` §5） |
+| 7 macOS | `G7` | ⬜ 未开始 |
+
 ## 下一步
 
-进 **Phase 2 · libmpv 适配器**。票面已由 [`docs/09`](docs/09-P2就绪度分析与票面修正.md) 修正为九张（原三张），判定门 **`G2`**：本地 mkv **出画 + 出声 + `seek` 落点精确 + `./Tools/gate.sh` 退出 0**。
+**先还 `M3` 的欠账**（不做新功能）：
 
-| ticket | 内容 | 状态 |
-| --- | --- | --- |
-| `P2-T0` | 模块拓扑：libmpv 适配器独立成包 `MPV/` | ✅ |
-| `P2-T1` | `MPVKernel` 生命周期 + 事件循环 | ✅（编译层） |
-| `P2-T2` | `VideoOutputProtocol` + `WindowEmbedOutput`（`wid`） | ✅ |
-| `P2-T3` | **装配层 `PlayerController`** —— 内核事件流的唯一消费者 + 扇出 | ✅（同日完成测试框架迁移 → Swift Testing、xcodegen scheme、门禁管道修复） |
-| `P2-T4` | `PlayerKernelSnapshot` 加 `naturalSize`（跨层，与 T5 同批） | ✅ |
-| `P2-T5` | 属性映射补全 + `pause` 改 observe（取消乐观 emit） | ✅ |
-| `P2-T6` | `END_FILE` 区分错误 → `.failed`（附：`PlaybackEndReason` 策略入 Core；**并反转状态机四条边**，见 `docs/03` 📌） | ✅ |
-| `P2-T7` | `attach` 时序收口（`init` 参数化）+ wakeup 回调改 `passRetained` | ✅ |
-| `P2-T8` | 播放控制 + `seek` 用 `absolute+exact`（钳制归装配层） | ✅（实测抓出两处真缺陷：换文件回不到 `.playing`、播完 `.finished` 是死状态） |
-| `P2-T10` | Demo 接入 `PlayerMPV` 包（端到端硬前置） | ✅（端到端样板 + `-autoLoadSample` / `-traceUpdates` 两个可脚本化开关） |
-| `P2-T9` | `MPV/` 包纳入门禁（test target + `gate.sh` 条件步骤） | ✅（`gate.sh` 扩为 **6 步**：编译 + **真实 libmpv 行为测试**） |
-| `P2-T10` | Demo 接入 `PlayerMPV` 包（端到端硬前置） | ✅（端到端样板 + `-autoLoadSample` / `-traceUpdates` 两个可脚本化开关） |
-| `P2-T10` | Demo 接入 `PlayerMPV` 包（端到端硬前置） | 待开始 |
-| `P2-T11` | 端到端 + 性能基线 + [`docs/10`](docs/10-P2验证报告.md) + `G2` 固化 | ✅（出画 · seek 精确 · 门禁 0；首屏 60 ms · 1.02x 实时 · 缓冲 0 · 峰值 49.1 MB） |
-| `P2-T12` | **补音轨，关闭 `G2` 最后一项（出声）** | ✅（AAC 音轨 + `PlayerAudioState` 四层贯穿；实测音频输出建立。⚠️ 音轨使模拟器首屏 60 ms → 1.97 s，**待真机校准**，见 `docs/10` §二） |
+1. **真机校准** —— 音轨使模拟器首屏 60 ms → 1.97 s，**模拟器的数字不可信**；真机上量一遍再说要不要优化。
+2. **手动长跑 30 min** —— 看内存是否增长、音频输出是否掉线（`G2` 只跑过 5 秒）。
+3. **字幕菜单在真机上手势可用性** —— 菜单项多时是否可滚动、延迟按钮是否够大。
 
-**可直接复用的既有成果**：产物接入方式与已验证配置见 [`docs/06`](docs/06-P0-T5a技术验证报告.md) / [`docs/07`](docs/07-P0-T5b验证报告.md)；`spike/p0-t5b-lgpl-dynamic-build/verify/` 就是一份能跑通的接线样板。
+之后进 **Phase 5 · 网络点播**。
 
 > **范围锚点是 M3（"能顺手用"）**：任何不推进 M3 的需求都往后排。

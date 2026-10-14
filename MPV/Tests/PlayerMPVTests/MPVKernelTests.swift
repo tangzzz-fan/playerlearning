@@ -96,6 +96,13 @@ struct KernelHarness {
 
 /// ⚠️ `@Suite(.serialized)`：Swift Testing **默认并行**，而每个用例都会拉起一个真实的 mpv 实例
 /// （视频解码 + VideoToolbox）。串行跑是为了让失败可归因 —— 并行下无法区分"实现坏了"与"互相抢资源"。
+///
+/// ⚠️⚠️ **而且 `.serialized` 只管"套件内部"**：两个套件之间**仍然并行**。
+/// 这条是实测踩出来的 —— 新增一个字幕套件之后，同一次改动**两次运行失败在不同的测试上**
+/// （一次是字幕的、一次是既有的 `testLoadingMissingFileReportsFailure`），
+/// 单独复跑两次又全绿：典型的资源争抢。
+/// ⇒ **本文件里所有需要真实 mpv 的用例都必须在同一个 `@Suite(.serialized)` 内**，
+///    不要再拆出第二个套件（哪怕主题不同、哪怕文件会变长）。
 @Suite(.serialized)
 struct MPVKernelTests {
     @Test
@@ -352,6 +359,169 @@ struct MPVKernelTests {
         }
         let states = await harness.states()
         #expect(states.contains(.playing), "播完之前应先经历过 .playing，实际序列：\(states)")
+        await harness.shutdown()
+    }
+
+    // MARK: - 字幕（`G4`）
+
+    /// 拉起一个**正在播放**的内核 —— 字幕断言都建立在"有东西在播"之上。
+    /// 返回 (harness, clip)：调用方负责 `TestClip.remove`。
+    private func harnessPlaying() async throws -> (KernelHarness, URL) {
+        let clip = try await TestClip.makeURL()
+        let harness = await KernelHarness()
+        try await harness.kernel.load(PlayerResource(url: clip))
+        try await harness.waitFor("先进入 .playing") { event in
+            event == .stateChanged(.playing)
+        }
+        return (harness, clip)
+    }
+
+    @Test
+    func testExternalSubtitleIsEnumeratedAndAutomaticallySelected() async throws {
+        let (harness, clip) = try await harnessPlaying()
+        let subtitle = try TestSubtitle.makeURL(TestSubtitle.chineseSRT, extension: "srt")
+        defer {
+            TestClip.remove(clip)
+            TestClip.remove(subtitle)
+        }
+
+        await harness.kernel.addSubtitle(url: subtitle, title: "中文字幕")
+        try await waitUntil("字幕轨出现在状态里") {
+            await harness.kernel.snapshot().subtitles.hasSource
+        }
+
+        let state = await harness.kernel.snapshot().subtitles
+        #expect(state.tracks.count == 1, "实际轨道：\(state.tracks)")
+        #expect(state.tracks.first?.isExternal == true, "外挂字幕必须标记为外挂（内挂/外挂要能区分）")
+        #expect(state.tracks.first?.title == "中文字幕")
+        #expect(state.selectedTrackID != nil, "`sub-add … select` 之后应自动选中")
+        #expect(state.isVisible, "mpv 默认 `sub-visibility=yes`")
+        #expect(state.isDisplaying)
+
+        // 事件也该到过一次（界面靠它刷新菜单）
+        try await harness.waitFor("上报过字幕状态") { event in
+            if case .subtitlesChanged(let value) = event { return value.hasSource }
+            return false
+        }
+        await harness.shutdown()
+    }
+
+    /// 延迟必须**能设、能回读**（`G4` 的「字幕延迟可调」）。
+    @Test
+    func testSubtitleDelayIsAppliedAndReadBack() async throws {
+        let (harness, clip) = try await harnessPlaying()
+        let subtitle = try TestSubtitle.makeURL(TestSubtitle.chineseSRT, extension: "srt")
+        defer {
+            TestClip.remove(clip)
+            TestClip.remove(subtitle)
+        }
+
+        await harness.kernel.addSubtitle(url: subtitle, title: nil)
+        try await waitUntil("字幕轨就位") { await harness.kernel.snapshot().subtitles.hasSource }
+
+        await harness.kernel.setSubtitleDelay(1.25)
+        try await waitUntil("sub-delay 回读为 1.25") {
+            abs(await harness.kernel.snapshot().subtitles.delay - 1.25) < 0.001
+        }
+
+        let snapshot = await harness.kernel.snapshot()
+        #expect(abs(snapshot.subtitles.delay - 1.25) < 0.001, "实测 \(snapshot.subtitles.delay)")
+        await harness.shutdown()
+    }
+
+    @Test
+    func testHidingSubtitlesIsReportedWithoutLosingTracks() async throws {
+        let (harness, clip) = try await harnessPlaying()
+        let subtitle = try TestSubtitle.makeURL(TestSubtitle.chineseSRT, extension: "srt")
+        defer {
+            TestClip.remove(clip)
+            TestClip.remove(subtitle)
+        }
+
+        await harness.kernel.addSubtitle(url: subtitle, title: nil)
+        try await waitUntil("字幕轨就位") { await harness.kernel.snapshot().subtitles.hasSource }
+
+        await harness.kernel.setSubtitleVisible(false)
+        try await waitUntil("sub-visibility 回读为 false") {
+            await harness.kernel.snapshot().subtitles.isVisible == false
+        }
+
+        let snapshot = await harness.kernel.snapshot()
+        #expect(!snapshot.subtitles.isVisible)
+        #expect(!snapshot.subtitles.isDisplaying)
+        #expect(snapshot.subtitles.hasSource, "关掉可见性只是不显示，**不该把轨道丢掉**")
+        await harness.shutdown()
+    }
+
+    /// 选中"无"必须真的落到 `sid=no`，而不是被 `>= 0` 的判断悄悄放过去。
+    @Test
+    func testClearingSubtitleSelectionIsReported() async throws {
+        let (harness, clip) = try await harnessPlaying()
+        let subtitle = try TestSubtitle.makeURL(TestSubtitle.chineseSRT, extension: "srt")
+        defer {
+            TestClip.remove(clip)
+            TestClip.remove(subtitle)
+        }
+
+        await harness.kernel.addSubtitle(url: subtitle, title: nil)
+        try await waitUntil("先有选中的轨") { await harness.kernel.snapshot().subtitles.selectedTrackID != nil }
+
+        await harness.kernel.selectSubtitleTrack(id: nil)
+
+        try await waitUntil("选择被清空") { await harness.kernel.snapshot().subtitles.selectedTrackID == nil }
+        let snapshot = await harness.kernel.snapshot()
+        #expect(snapshot.subtitles.selectedTrackID == nil)
+        #expect(snapshot.subtitles.hasSource, "清掉选择不该影响轨道清单")
+        await harness.shutdown()
+    }
+
+    /// ASS 走 libass。这里证它**能加载并被枚举**；特效是 libass 的事，
+    /// 我们自绘时才需要自己解析样式（`P4-T3` 记为第二期）。
+    @Test
+    func testASSSubtitleLoads() async throws {
+        let (harness, clip) = try await harnessPlaying()
+        let subtitle = try TestSubtitle.makeURL(TestSubtitle.effectASS, extension: "ass")
+        defer {
+            TestClip.remove(clip)
+            TestClip.remove(subtitle)
+        }
+
+        await harness.kernel.addSubtitle(url: subtitle, title: "ASS")
+
+        try await waitUntil("ASS 轨道出现在状态里") { await harness.kernel.snapshot().subtitles.hasSource }
+        let state = await harness.kernel.snapshot().subtitles
+        #expect(state.tracks.first?.isExternal == true)
+        #expect(state.selectedTrackID != nil)
+        await harness.shutdown()
+    }
+
+    /// **换文件之后轨道清单必须重建** —— 否则字幕菜单永远停在上一个文件的轨道上。
+    ///
+    /// ⚠️ 这里**不断言** `selectedTrackID == nil`：实测 mpv 换文件后 `sid` 仍指向旧文件的轨道 id。
+    /// 那是 mpv 的表示法，不是我们的契约；我们的契约是**语义**的：解析不到轨 ⇒ 什么都没在显示。
+    @Test
+    func testSwitchingFilesClearsPreviousSubtitleTracks() async throws {
+        let (harness, clip) = try await harnessPlaying()
+        let subtitle = try TestSubtitle.makeURL(TestSubtitle.chineseSRT, extension: "srt")
+        let secondClip = try await TestClip.makeURL()
+        defer {
+            TestClip.remove(clip)
+            TestClip.remove(secondClip)
+            TestClip.remove(subtitle)
+        }
+
+        await harness.kernel.addSubtitle(url: subtitle, title: "中文字幕")
+        try await waitUntil("字幕轨就位") { await harness.kernel.snapshot().subtitles.hasSource }
+
+        try await harness.kernel.load(PlayerResource(url: secondClip))
+        try await waitUntil("换文件后旧字幕轨被清掉") {
+            await harness.kernel.snapshot().subtitles.hasSource == false
+        }
+
+        let snapshot = await harness.kernel.snapshot()
+        #expect(snapshot.subtitles.tracks.isEmpty, "实际轨道：\(snapshot.subtitles.tracks)")
+        #expect(snapshot.subtitles.selectedTrack == nil, "陈旧 id 不该解析出轨道")
+        #expect(!snapshot.subtitles.isDisplaying, "换文件后不该还在'显示'上一个文件的字幕")
         await harness.shutdown()
     }
 }

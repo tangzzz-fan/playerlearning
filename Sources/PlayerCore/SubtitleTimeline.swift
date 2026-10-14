@@ -23,7 +23,7 @@ public struct SubtitleTimeline: Sendable, Equatable {
     public init(cues: [SubtitleCue] = [], delay: Double = 0) {
         let sorted = Self.sorted(cues)
         self.cues = sorted
-        self.delay = Self.normalized(delay)
+        self.delay = Self.normalizeDelay(delay)
         longestDuration = sorted.map(\.duration).max() ?? 0
     }
 
@@ -35,7 +35,7 @@ public struct SubtitleTimeline: Sendable, Equatable {
     }
 
     public mutating func setDelay(_ seconds: Double) {
-        delay = Self.normalized(seconds)
+        delay = Self.normalizeDelay(seconds)
     }
 
     public mutating func adjustDelay(by delta: Double) {
@@ -93,7 +93,7 @@ public struct SubtitleTimeline: Sendable, Equatable {
     ///
     /// 对齐毫秒是必要的：延迟会被反复 `±0.1` 地按，浮点累加会攒出 `0.30000000000000004`，
     /// 于是"显示 0.3"与"内核收到 0.3"永远对不上，做相等断言也会莫名其妙地失败。
-    private static func normalized(_ seconds: Double) -> Double {
+    public static func normalizeDelay(_ seconds: Double) -> Double {
         guard seconds.isFinite else { return 0 }
         let clamped = Swift.min(Swift.max(seconds, delayRange.lowerBound), delayRange.upperBound)
         return (clamped * 1000).rounded() / 1000

@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 public actor FakeKernel: PlayerKernelProtocol {
     public private(set) var loadedResources: [PlayerResource] = []
@@ -6,6 +7,10 @@ public actor FakeKernel: PlayerKernelProtocol {
     public private(set) var playCallCount = 0
     public private(set) var pauseCallCount = 0
     public private(set) var stopCallCount = 0
+    public private(set) var addedSubtitles: [(url: URL, title: String?)] = []
+    public private(set) var selectedSubtitleTrackIDs: [Int64?] = []
+    public private(set) var subtitleVisibilityRequests: [Bool] = []
+    public private(set) var subtitleDelayRequests: [Double] = []
 
     private let scriptedDuration: Double
     private let scriptedNaturalSize: CGSize
@@ -16,6 +21,7 @@ public actor FakeKernel: PlayerKernelProtocol {
     private var isBuffering = false
     private var naturalSize: CGSize = .zero
     private var audio = PlayerAudioState()
+    private var subtitles = PlayerSubtitleState()
     private var continuation: AsyncStream<PlayerKernelEvent>.Continuation?
 
     public init() {
@@ -64,6 +70,38 @@ public actor FakeKernel: PlayerKernelProtocol {
         seekRequests.append(seconds)
     }
 
+    public func addSubtitle(url: URL, title: String?) async {
+        addedSubtitles.append((url, title))
+        // 真内核会枚举出新轨道并自动选中它 —— 假内核照同样语义走，
+        // 否则装配层/界面在测试里看到的是一条永远不会变的字幕状态。
+        let track = SubtitleTrack(id: Int64(100 + addedSubtitles.count), title: title, isExternal: true)
+        subtitles.tracks.append(track)
+        subtitles.selectedTrackID = track.id
+        subtitles.isVisible = true
+        emit(.subtitlesChanged(subtitles))
+    }
+
+    public func selectSubtitleTrack(id: Int64?) async {
+        selectedSubtitleTrackIDs.append(id)
+        guard subtitles.selectedTrackID != id else { return }
+        subtitles.selectedTrackID = id
+        emit(.subtitlesChanged(subtitles))
+    }
+
+    public func setSubtitleVisible(_ visible: Bool) async {
+        subtitleVisibilityRequests.append(visible)
+        guard subtitles.isVisible != visible else { return }
+        subtitles.isVisible = visible
+        emit(.subtitlesChanged(subtitles))
+    }
+
+    public func setSubtitleDelay(_ seconds: Double) async {
+        subtitleDelayRequests.append(seconds)
+        guard subtitles.delay != seconds else { return }
+        subtitles.delay = seconds
+        emit(.subtitlesChanged(subtitles))
+    }
+
     public func events() async -> AsyncStream<PlayerKernelEvent> {
         let (stream, continuation) = AsyncStream<PlayerKernelEvent>.makeStream()
         self.continuation = continuation
@@ -82,7 +120,8 @@ public actor FakeKernel: PlayerKernelProtocol {
             duration: duration,
             isBuffering: isBuffering,
             naturalSize: naturalSize,
-            audio: audio
+            audio: audio,
+            subtitles: subtitles
         )
     }
 
@@ -105,6 +144,8 @@ public actor FakeKernel: PlayerKernelProtocol {
             naturalSize = size
         case .audioChanged(let state):
             audio = state
+        case .subtitlesChanged(let state):
+            subtitles = state
         }
     }
 }

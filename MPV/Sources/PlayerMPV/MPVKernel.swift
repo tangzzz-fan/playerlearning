@@ -61,6 +61,7 @@ public actor MPVKernel: PlayerKernelProtocol {
     private var naturalSize: CGSize = .zero
     private var videoSizeTracker = VideoSizeTracker()
     private var audio = PlayerAudioState()
+    private var subtitles = PlayerSubtitleState()
 
     /// 注册表用的**无参**构造（`PlayerKernelProtocol` 要求）—— 等价于**无画面**。
     ///
@@ -97,7 +98,8 @@ public actor MPVKernel: PlayerKernelProtocol {
             duration: duration,
             isBuffering: isBuffering,
             naturalSize: naturalSize,
-            audio: audio
+            audio: audio,
+            subtitles: subtitles
         )
     }
 
@@ -136,6 +138,40 @@ public actor MPVKernel: PlayerKernelProtocol {
     public func seek(to seconds: Double) async {
         guard let handle = owner?.pointer else { return }
         try? send(handle, ["seek", String(seconds), "absolute+exact"])
+    }
+
+    /// 加一条外挂字幕。
+    ///
+    /// ⚠️ 发完命令**立刻自己读一次轨道清单**，而不是坐等 `track-list` 的"变化"通知 ——
+    /// 这是 `P-038` 的教训：**「问现在是什么」比「等它通知我变了」可靠**。
+    /// （`track-list/count` 是否可被 observe 是**要验证的假设**，不能把它当既成事实。）
+    public func addSubtitle(url: URL, title: String?) async {
+        guard let handle = owner?.pointer else { return }
+        var arguments = ["sub-add", url.absoluteString, "select"]
+        if let title, !title.isEmpty { arguments.append(title) }
+        try? send(handle, arguments)
+        refreshSubtitleState()
+    }
+
+    /// 选中某条字幕轨；`nil` = `sid=no`（不显示任何字幕轨）。
+    public func selectSubtitleTrack(id: Int64?) async {
+        guard let handle = owner?.pointer else { return }
+        setProperty(handle, "sid", id.map(String.init) ?? "no")
+        refreshSubtitleState()
+    }
+
+    /// `sub-visibility` —— 只发命令，状态由回读/观察得到（同 `P2-T5` 对 `pause` 的做法）。
+    public func setSubtitleVisible(_ visible: Bool) async {
+        guard let handle = owner?.pointer else { return }
+        setProperty(handle, "sub-visibility", visible ? "yes" : "no")
+        refreshSubtitleState()
+    }
+
+    /// `sub-delay`，正数 = 字幕晚出现。**钳制不在内核做**（由装配层 `PlayerController` 履行）。
+    public func setSubtitleDelay(_ seconds: Double) async {
+        guard let handle = owner?.pointer else { return }
+        setProperty(handle, "sub-delay", String(seconds))
+        refreshSubtitleState()
     }
 
     public func finishEvents() {
@@ -214,6 +250,13 @@ public actor MPVKernel: PlayerKernelProtocol {
         // 只有后者才意味着声音真的进了输出设备。`G2` 的"出声"一项就靠它拿证据。
         _ = mpv_observe_property(handle, 0, "audio-params/samplerate", MPV_FORMAT_INT64)
         _ = mpv_observe_property(handle, 0, "audio-out-params/samplerate", MPV_FORMAT_INT64)
+        // 字幕：轨道清单的变化（`track-list/count`）+ 三个状态属性。
+        // ⚠️ `track-list/count` 能否被 observe 需实测；我们**没有**把正确性押在它上面 ——
+        //    每次命令之后与 `FILE_LOADED` 之后都会主动回读（见 `refreshSubtitleState`）。
+        _ = mpv_observe_property(handle, 0, "track-list/count", MPV_FORMAT_INT64)
+        _ = mpv_observe_property(handle, 0, "sid", MPV_FORMAT_INT64)
+        _ = mpv_observe_property(handle, 0, "sub-visibility", MPV_FORMAT_FLAG)
+        _ = mpv_observe_property(handle, 0, "sub-delay", MPV_FORMAT_DOUBLE)
     }
 
     private nonisolated func installWakeupCallback(_ handle: OpaquePointer, sink: WakeupSink) {
@@ -242,6 +285,9 @@ public actor MPVKernel: PlayerKernelProtocol {
         case MPV_EVENT_FILE_LOADED:
             emit(.stateChanged(.readyToPlay))
             emitPauseState()
+            // 换文件会重建轨道清单（内挂字幕就在这一步出现）⇒ 必须回读，
+            // 否则界面上的字幕菜单永远停在上一个文件的轨道上。
+            refreshSubtitleState()
         case MPV_EVENT_END_FILE:
             guard let data = event.data else { return }
             emitEndFile(UnsafePointer<mpv_event_end_file>(OpaquePointer(data)).pointee)
@@ -302,6 +348,10 @@ public actor MPVKernel: PlayerKernelProtocol {
             // 这里不再多报一个状态，避免"退回去继续播"变成两次状态翻转。
             guard UnsafePointer<Int32>(OpaquePointer(data)).pointee != 0 else { return }
             emit(.stateChanged(.finished))
+        case "track-list/count", "sid", "sub-visibility", "sub-delay":
+            // 四条都走同一个"回读整份字幕状态"的路径：它们互相影响
+            // （比如 `sid` 变了，`track-list/N/selected` 也变了），逐条拼状态容易拼出不一致的中间态。
+            refreshSubtitleState()
         case "width":
             let width = Int(UnsafePointer<Int64>(OpaquePointer(data)).pointee)
             if let size = videoSizeTracker.setWidth(width) {
@@ -336,7 +386,83 @@ public actor MPVKernel: PlayerKernelProtocol {
             naturalSize = size
         case .audioChanged(let state):
             audio = state
+        case .subtitlesChanged(let state):
+            subtitles = state
         }
+    }
+
+    // MARK: - 字幕状态回读
+
+    /// 从内核**回读整份字幕状态**，有变化才上报。
+    ///
+    /// 为什么不逐属性拼：`sid` / `sub-visibility` / `sub-delay` / 轨道清单互相影响，
+    /// 逐条更新会在两者之间产生"界面看得到但内核不认"的中间态。
+    /// 一次读全、一次比较、一次上报，是这里唯一不容易出错的做法。
+    private func refreshSubtitleState() {
+        guard let handle = owner?.pointer else { return }
+        let next = PlayerSubtitleState(
+            tracks: readSubtitleTracks(handle),
+            selectedTrackID: readSelectedSubtitleTrackID(handle),
+            isVisible: getFlag(handle, "sub-visibility") ?? subtitles.isVisible,
+            delay: SubtitleTimeline.normalizeDelay(getDouble(handle, "sub-delay") ?? subtitles.delay)
+        )
+        guard next != subtitles else { return }
+        subtitles = next
+        emit(.subtitlesChanged(next))
+    }
+
+    private func readSubtitleTracks(_ handle: OpaquePointer) -> [SubtitleTrack] {
+        guard let count = getInt64(handle, "track-list/count"), count > 0 else { return [] }
+        var tracks: [SubtitleTrack] = []
+        for index in 0..<Int(count) {
+            let prefix = "track-list/\(index)"
+            guard let type = getString(handle, "\(prefix)/type"), type == "sub" else { continue }
+            let codec = getString(handle, "\(prefix)/codec")
+            tracks.append(
+                SubtitleTrack(
+                    id: getInt64(handle, "\(prefix)/id") ?? -1,
+                    title: getString(handle, "\(prefix)/title"),
+                    language: getString(handle, "\(prefix)/lang"),
+                    isExternal: getFlag(handle, "\(prefix)/external") ?? false,
+                    // 容器里的内挂字幕常常只报一个通用 `sub`，那不是编解码信息 ⇒ 置空。
+                    codec: codec == "sub" ? nil : codec
+                )
+            )
+        }
+        return tracks
+    }
+
+    /// mpv 用**负值**表示"没有选中"（`sid=no`）—— 这里把它归一成 `nil`，
+    /// 让上层只需要处理一种"没有"的表示法。
+    private func readSelectedSubtitleTrackID(_ handle: OpaquePointer) -> Int64? {
+        guard let sid = getInt64(handle, "sid"), sid >= 0 else { return nil }
+        return sid
+    }
+
+    private func getString(_ handle: OpaquePointer, _ name: String) -> String? {
+        var value: UnsafeMutablePointer<CChar>?
+        guard mpv_get_property(handle, name, MPV_FORMAT_STRING, &value) >= 0, let value else { return nil }
+        defer { mpv_free(value) }
+        let text = String(cString: value)
+        return text.isEmpty ? nil : text
+    }
+
+    private func getInt64(_ handle: OpaquePointer, _ name: String) -> Int64? {
+        var value: Int64 = 0
+        guard mpv_get_property(handle, name, MPV_FORMAT_INT64, &value) >= 0 else { return nil }
+        return value
+    }
+
+    private func getDouble(_ handle: OpaquePointer, _ name: String) -> Double? {
+        var value: Double = 0
+        guard mpv_get_property(handle, name, MPV_FORMAT_DOUBLE, &value) >= 0 else { return nil }
+        return value
+    }
+
+    private func getFlag(_ handle: OpaquePointer, _ name: String) -> Bool? {
+        var value: Int32 = 0
+        guard mpv_get_property(handle, name, MPV_FORMAT_FLAG, &value) >= 0 else { return nil }
+        return value != 0
     }
 
     private func setOption(_ handle: OpaquePointer, _ name: String, _ value: String) {

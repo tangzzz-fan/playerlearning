@@ -8,6 +8,7 @@ public struct PlayerControllerSnapshot: Sendable, Equatable {
     /// 视频原始像素尺寸；未知时为 `.zero`。
     public var naturalSize: CGSize
     public var audio: PlayerAudioState
+    public var subtitles: PlayerSubtitleState
 
     public init(
         state: PlayerState = .idle,
@@ -15,7 +16,8 @@ public struct PlayerControllerSnapshot: Sendable, Equatable {
         duration: Double = 0,
         isBuffering: Bool = false,
         naturalSize: CGSize = .zero,
-        audio: PlayerAudioState = PlayerAudioState()
+        audio: PlayerAudioState = PlayerAudioState(),
+        subtitles: PlayerSubtitleState = PlayerSubtitleState()
     ) {
         self.state = state
         self.currentTime = currentTime
@@ -23,5 +25,6 @@ public struct PlayerControllerSnapshot: Sendable, Equatable {
         self.isBuffering = isBuffering
         self.naturalSize = naturalSize
         self.audio = audio
+        self.subtitles = subtitles
     }
 }

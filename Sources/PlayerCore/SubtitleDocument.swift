@@ -25,6 +25,12 @@ public struct SubtitleDocument: Sendable, Equatable {
     public var skippedBlocks: Int
     /// 实际用什么编码解出来的（排查"乱码"时这是第一手证据）。
     public var decodedWith: SubtitleEncoding
+    /// **解码后的原文**（已剥 BOM）。
+    ///
+    /// 它的用途很具体：外挂字幕要交给播放内核，而内核不保证猜对编码 ⇒
+    /// 我们自己解好、**重新以 UTF-8 写出去**，从根上消灭"中文乱码"。
+    /// 这里存文本而不是重新序列化 cue，是为了**不改动内容**（只换编码）。
+    public var text: String
 
     public init(
         format: SubtitleFormat,
@@ -33,7 +39,8 @@ public struct SubtitleDocument: Sendable, Equatable {
         playResX: Int? = nil,
         playResY: Int? = nil,
         skippedBlocks: Int = 0,
-        decodedWith: SubtitleEncoding = .utf8
+        decodedWith: SubtitleEncoding = .utf8,
+        text: String = ""
     ) {
         self.format = format
         self.cues = cues
@@ -42,6 +49,7 @@ public struct SubtitleDocument: Sendable, Equatable {
         self.playResY = playResY
         self.skippedBlocks = skippedBlocks
         self.decodedWith = decodedWith
+        self.text = text
     }
 
     /// 建一条使用本文件内容的可查询时间线。
@@ -81,7 +89,8 @@ public struct SubtitleDocument: Sendable, Equatable {
                 format: .srt,
                 cues: result.cues,
                 skippedBlocks: result.skippedBlocks,
-                decodedWith: decoded.encoding
+                decodedWith: decoded.encoding,
+                text: decoded.text
             )
         case .ass, .ssa:
             let result = ASSParser.parse(decoded.text)
@@ -92,7 +101,8 @@ public struct SubtitleDocument: Sendable, Equatable {
                 playResX: result.playResX,
                 playResY: result.playResY,
                 skippedBlocks: result.skippedEvents,
-                decodedWith: decoded.encoding
+                decodedWith: decoded.encoding,
+                text: decoded.text
             )
         }
     }

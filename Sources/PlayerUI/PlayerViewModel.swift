@@ -29,8 +29,10 @@ public final class PlayerViewModel {
     public private(set) var scrub = PlayerScrubModel()
     /// 全屏状态（纯逻辑）。
     public private(set) var fullscreen = PlayerFullscreenModel()
-    /// 字幕开关（`P3-T3` 占位，`P4` 接真字幕）。
-    public private(set) var subtitles = PlayerSubtitleToggle()
+    /// 字幕状态（轨道清单 / 选中项 / 开关 / 延迟）。**来自内核**，不是界面自己记的。
+    public private(set) var subtitles = PlayerSubtitleState()
+    /// 字幕加载结果的一行字（编码 / 格式 / 丢了几块）。
+    public private(set) var subtitleNote: String?
 
     /// 安全作用域访问记账（外部文件必须持有访问权，且换文件时才释放）。
     private var fileAccess = PlayerSecurityScopedAccess()
@@ -98,6 +100,9 @@ public final class PlayerViewModel {
         if let previous = fileAccess.end() {
             previous.stopAccessingSecurityScopedResource()
         }
+        // 字幕副本不留在磁盘上：残留会让人以为"字幕是自己冒出来的"。
+        SubtitleLoader.cleanUp()
+        subtitleNote = nil
         await controller.finishUpdates()
     }
 
@@ -105,8 +110,31 @@ public final class PlayerViewModel {
         fullscreen.toggle()
     }
 
-    public func toggleSubtitles() {
-        subtitles.toggle()
+    /// 开关取反：**只发命令**，状态等内核回执（`sub-visibility` 是可观测属性 —— 同 `P2-T5` 的原则）。
+    public func toggleSubtitles() async {
+        await controller.toggleSubtitleVisibility()
+    }
+
+    public func selectSubtitleTrack(id: Int64?) async {
+        await controller.selectSubtitleTrack(id: id)
+    }
+
+    public func adjustSubtitleDelay(by delta: Double) async {
+        await controller.adjustSubtitleDelay(by: delta)
+    }
+
+    /// 加载一条外挂字幕：读 → 解编码 → 以 UTF-8 另存 → 交给内核。
+    /// 失败时**如实报出来**，不静默（否则用户只会看到"字幕没反应"）。
+    public func loadSubtitle(from url: URL) async {
+        do {
+            let prepared = try SubtitleLoader.prepare(url: url)
+            subtitleNote = prepared.summary
+            await controller.addSubtitle(url: prepared.url, title: url.lastPathComponent)
+        } catch SubtitleLoadError.undecodable {
+            subtitleNote = "字幕编码认不出来（已中止，避免显示乱码）"
+        } catch {
+            subtitleNote = "字幕读取失败：\(error)"
+        }
     }
 
     public func load(_ resource: PlayerResource) async {
@@ -174,6 +202,8 @@ public final class PlayerViewModel {
             naturalSize = size
         case .audioChanged(let newState):
             audio = newState
+        case .subtitlesChanged(let newState):
+            subtitles = newState
         }
     }
 

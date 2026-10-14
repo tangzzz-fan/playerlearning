@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 public struct PlayerScreenView: View {
     @State private var model: PlayerViewModel
     @State private var isPickingFile = false
+    @State private var isPickingSubtitle = false
     private let surface: WindowEmbedOutput
 
     /// ⚠️ surface **由外部传入**，不在内部创建：`wid` 句柄必须早于内核构造，
@@ -29,13 +30,20 @@ public struct PlayerScreenView: View {
                 canScrub: model.canScrub,
                 isFullscreen: model.fullscreen.hidesHostChrome,
                 subtitleLabel: model.subtitles.label,
+                isSubtitleDisplaying: model.subtitles.isDisplaying,
+                subtitleTracks: model.subtitles.tracks,
+                selectedSubtitleTrackID: model.subtitles.selectedTrackID,
+                subtitleDelay: model.subtitles.delay,
                 onTogglePlay: { Task { await model.togglePlayPause() } },
                 onScrubBegan: { Task { await model.beginScrub() } },
                 onScrubChanged: { model.updateScrub(fraction: $0) },
                 onScrubEnded: { Task { await model.endScrub() } },
                 onToggleFullscreen: { model.toggleFullscreen() },
-                onToggleSubtitles: { model.toggleSubtitles() },
-                onOpenFile: { isPickingFile = true }
+                onToggleSubtitles: { Task { await model.toggleSubtitles() } },
+                onSelectSubtitle: { id in Task { await model.selectSubtitleTrack(id: id) } },
+                onAdjustSubtitleDelay: { delta in Task { await model.adjustSubtitleDelay(by: delta) } },
+                onOpenFile: { isPickingFile = true },
+                onOpenSubtitle: { isPickingSubtitle = true }
             )
             if !model.fullscreen.hidesHostChrome {
                 statusLine
@@ -52,6 +60,13 @@ public struct PlayerScreenView: View {
         ) { result in
             guard case let .success(url) = result else { return }
             Task { await model.load(PlayerResource(url: url)) }
+        }
+        .fileImporter(
+            isPresented: $isPickingSubtitle,
+            allowedContentTypes: SubtitleLoader.allowedContentTypes
+        ) { result in
+            guard case let .success(url) = result else { return }
+            Task { await model.loadSubtitle(from: url) }
         }
     }
 
@@ -84,7 +99,9 @@ public struct PlayerScreenView: View {
         let size = model.naturalSize
         let video = size.width > 0 ? "\(Int(size.width))×\(Int(size.height))" : "—"
         let audio = model.audio.isOutputting ? "输出 \(model.audio.outputSampleRate) Hz" : "无输出"
-        return "\(model.state) · 画面 \(video) · 音频 \(audio) · \(model.subtitles.label)"
-            + (model.isBuffering ? " · 缓冲中" : "")
+        var text = "\(model.state) · 画面 \(video) · 音频 \(audio) · \(model.subtitles.label)"
+        if let note = model.subtitleNote { text += " · \(note)" }
+        if model.isBuffering { text += " · 缓冲中" }
+        return text
     }
 }

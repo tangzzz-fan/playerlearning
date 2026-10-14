@@ -74,6 +74,19 @@ enum SampleClipProvider {
         return SampleClip(url: generated, source: .generated)
     }
 
+    /// 与样例视频**同名**的字幕文件（sidecar）。
+    ///
+    /// 这是播放器行业的通行约定：`flower.mp4` 旁边的 `flower.srt` / `flower.ass` 自动可用。
+    /// 它给"手动验证字幕"留了一条零操作的路：往样例目录里丢一个 `flower.srt` 就行。
+    public static func sidecarSubtitle(for clip: SampleClip) -> URL? {
+        let base = clip.url.deletingPathExtension()
+        for ext in ["srt", "ass", "ssa"] {
+            let candidate = base.appendingPathExtension(ext)
+            if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+        }
+        return nil
+    }
+
     // MARK: - 缓存
 
     private static func cacheDirectory() -> URL {
