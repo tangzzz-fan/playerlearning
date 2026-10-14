@@ -525,6 +525,28 @@ struct MPVKernelTests {
         await harness.shutdown()
     }
 
+    /// **我设的每一项 mpv 选项，mpv 都认吗？**
+    ///
+    /// 选项名拼错、或当前 mpv 版本不认识它时，`mpv_set_option_string` 只是**返回负值** ——
+    /// 不抛异常、不打印。那个选项就静默不生效，而代码看上去完全正确。
+    /// 这条用例把"**我设了**"变成"**它认了**"（`P5-T2` 的验证基础）。
+    @Test
+    func testEveryConfiguredOptionIsAcceptedByMPV() async throws {
+        let url = try await TestClip.makeURL()
+        defer { TestClip.remove(url) }
+        let harness = await KernelHarness()
+
+        // 选项是在 `prepare()` 里设的 ⇒ 触发一次加载让它跑起来。
+        try await harness.kernel.load(PlayerResource(url: url))
+
+        let rejected = await harness.kernel.rejectedOptionNames()
+        #expect(
+            rejected.isEmpty,
+            "以下选项 mpv 没有接受（名字拼错或版本不支持）⇒ 它们**静默不生效**：\(rejected)"
+        )
+        await harness.shutdown()
+    }
+
     // MARK: - 播放控制（`stop` / `play` 的真实语义）
 
     /// **「停止」之后再点「播放」必须能重新播起来。**

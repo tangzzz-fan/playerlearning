@@ -67,6 +67,12 @@ public actor MPVKernel: PlayerKernelProtocol {
     private var videoSizeTracker = VideoSizeTracker()
     private var audio = PlayerAudioState()
     private var subtitles = PlayerSubtitleState()
+    /// 被 mpv 拒绝的选项（名字拼错 / 版本不支持）。**空数组才是正常状态**。
+    private var rejectedOptions: [String] = []
+    /// 内核日志出口（见 `enableLogging`）。
+    private var logHandler: (@Sendable (String) -> Void)?
+    /// 期望的日志级别。句柄可能还没建（首次 `load` 才建），所以先记住，`prepare()` 时补上。
+    private var requestedLogLevel: String?
 
     /// 注册表用的**无参**构造（`PlayerKernelProtocol` 要求）—— 等价于**无画面**。
     ///
@@ -244,6 +250,11 @@ public actor MPVKernel: PlayerKernelProtocol {
         let handleOwner = MPVHandleOwner(pointer: created, sink: sink)
         owner = handleOwner
         installWakeupCallback(created, sink: sink)
+        // 日志可能是在句柄建立**之前**就要求打开的（`enableLogging` 早于首次 load）。
+        if let requestedLogLevel {
+            let status = mpv_request_log_messages(created, requestedLogLevel)
+            logHandler?("[mpv/request] level=\(requestedLogLevel) handle=created status=\(status)")
+        }
         return created
     }
 
@@ -262,7 +273,63 @@ public actor MPVKernel: PlayerKernelProtocol {
         setOption(handle, "keep-open", "yes")
         setOption(handle, "idle", "yes")
         setOption(handle, "terminal", "no")
-        setOption(handle, "osc", "no")
+        // ⚠️ 这里曾经还有一条 `osc=no` —— 它**从来没生效过**，直到
+        // `testEveryConfiguredOptionIsAcceptedByMPV` 把它抓出来：
+        // 自建的 LGPL 产物是**精简构建**（不带 OSC / lua），该选项**根本不存在**。
+        // 删掉而不是"允许它失败"：**设一个不存在的选项，除了制造"我配过了"的错觉，
+        // 没有任何作用。**
+        applyNetworkOptions(handle)
+    }
+
+    /// 网络点播相关的 mpv 选项（`P5-T1` / `P5-T2`）。
+    ///
+    /// ⚠️ **这几项没有参考实现可抄** —— 实测核实过：`vendor/ksplayer` 的 `MPVHandle`
+    /// 完全不碰网络/缓存参数。所以取值依据 mpv 官方文档，
+    /// 而"它们到底生效了没有"由 `rejectedOptions` 兜底，
+    /// **不能**用"照文档写的所以肯定对"来替代验证。
+    ///
+    /// 原则：**让 mpv 吸收网络抖动，而不是让 UI 去处理**。
+    private func applyNetworkOptions(_ handle: OpaquePointer) {
+        // 显式打开缓存。默认的 `auto` 会按流类型自己决定，对本地文件够用，
+        // 但网络流的抖动必须由缓存吸收 —— 否则表现为画面一顿一顿。
+        setOption(handle, "cache", "yes")
+        // 起播前先攒够再开始：网络流最糟的第一印象就是"点开先卡三秒"。
+        setOption(handle, "cache-pause-initial", "yes")
+        setOption(handle, "cache-pause-wait", "3")
+        // 前向 / 后向缓冲上限（字节）。**给上限是为了不让网络流把内存吃光** ——
+        // 没有上限时，一个长片的缓存可以轻易吃掉几百 MB。
+        setOption(handle, "demuxer-max-bytes", "64MiB")
+        setOption(handle, "demuxer-max-back-bytes", "16MiB")
+        // 网络超时：太短会在弱网下误判为"流断了"，太长会让"打不开"迟迟不报错。
+        setOption(handle, "network-timeout", "30")
+        // User-Agent 是最简形态的请求头注入（`P5-T4`）—— 不少 CDN 直接按 UA 拒绝。
+        setOption(handle, "user-agent", "PlayerStack/1.0")
+    }
+
+    /// 供测试断言：**空数组 = 所有配置过的选项 mpv 都认**。
+    public func rejectedOptionNames() -> [String] {
+        rejectedOptions
+    }
+
+    /// 打开 mpv 自己的日志并转发出去（排查用）。
+    ///
+    /// **为什么必须有这条通道**：网络流为什么没播起来、编码为什么解不开、协议协商为什么失败 ——
+    /// 这些问题**从我们的状态机里看不出来**（我们只看到"它说 EOF 了"）。
+    /// 内核自己的日志是唯一说得清的地方；没有它就只能靠猜，而猜错的方向代价很高。
+    /// ⚠️ **签名必须与协议要求逐字一致**（`enableLogging(_:)`，单参数）。
+    /// 我第一版写成 `enableLogging(level:handler:)` —— 带默认参数的方法**不满足**单参数要求，
+    /// 于是编译器**静默选中了协议的默认实现（no-op）**，我这个实现从来没被调用过。
+    /// 症状是"日志一行都没有"，而它看起来完全像是在正常工作。
+    /// **默认实现是个好东西，但它会把"签名写错了"变成"什么都没发生"。**
+    public func enableLogging(_ handler: @escaping @Sendable (String) -> Void) async {
+        let level = "v"
+        logHandler = handler
+        requestedLogLevel = level
+        // 自报一行：否则"内核一行日志都没有"与"日志通道压根没打开"看起来一模一样
+        // —— 而这两种情况的排查方向完全相反。
+        let handle = owner?.pointer
+        let status = handle.map { mpv_request_log_messages($0, level) } ?? -999
+        handler("[mpv/request] level=\(level) handle=\(handle != nil ? "ready" : "pending") status=\(status)")
     }
 
     private func observeProperties(_ handle: OpaquePointer) {
@@ -328,6 +395,13 @@ public actor MPVKernel: PlayerKernelProtocol {
         case MPV_EVENT_PROPERTY_CHANGE:
             guard let data = event.data else { return }
             applyProperty(UnsafePointer<mpv_event_property>(OpaquePointer(data)).pointee)
+        case MPV_EVENT_LOG_MESSAGE:
+            guard let data = event.data, let logHandler else { return }
+            let message = UnsafePointer<mpv_event_log_message>(OpaquePointer(data)).pointee
+            let prefix = String(cString: message.prefix)
+            let text = String(cString: message.text).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return }
+            logHandler("[mpv/\(prefix)] \(text)")
         default:
             break
         }
@@ -344,9 +418,15 @@ public actor MPVKernel: PlayerKernelProtocol {
     /// 判据不是"pause 等于什么"，而是"有没有东西可以被 pause"。
     private func emitPauseState() {
         guard let handle = owner?.pointer else { return }
-        guard !isPlaylistEmpty(handle) else { return }
+        guard !isPlaylistEmpty(handle) else {
+            logHandler?("[mpv/pause] 跳过：playlist 为空")
+            return
+        }
         var flag: Int32 = 0
-        guard mpv_get_property(handle, "pause", MPV_FORMAT_FLAG, &flag) >= 0 else { return }
+        guard mpv_get_property(handle, "pause", MPV_FORMAT_FLAG, &flag) >= 0 else {
+            logHandler?("[mpv/pause] 读取 pause 失败")
+            return
+        }
         emit(.stateChanged(flag != 0 ? .paused : .playing))
     }
 
@@ -355,8 +435,15 @@ public actor MPVKernel: PlayerKernelProtocol {
     /// **`pause=no` 不等于「正在播放」**：`stop` 之后播放列表为空，
     /// 而 mpv 此时的 `pause` 同样是 `no`。少这一层判断的后果很具体 ——
     /// "停止后按暂停"会把内核状态读成 `.playing`，而它其实什么都没在播。
+    ///
+    /// ⚠️ **读失败时返回 `false`（= 不阻断）**，不能写成 `?? 0`。
+    /// 那个默认值会把"**读不到**"变成"**确定为空**"，而这个判断是个守卫 ——
+    /// 结果就是**所有状态上报被悄悄挡掉**，症状是界面永久停在 `.readyToPlay`
+    /// 而画面尺寸/时长照报（**实测踩到**）。
+    /// 判据：**"不确定"必须与"确定为零"分开处理** —— 守卫遇到不确定时应当放行。
     private func isPlaylistEmpty(_ handle: OpaquePointer) -> Bool {
-        (getInt64(handle, "playlist-count") ?? 0) == 0
+        guard let count = getInt64(handle, "playlist-count") else { return false }
+        return count == 0
     }
 
     /// **必须按 `reason` 分派。** 无条件报 `.finished` 会让坏文件永远进不了 `.failed` ——
@@ -417,6 +504,8 @@ public actor MPVKernel: PlayerKernelProtocol {
         }
     }
 
+    /// ⚠️ 内核日志**不进事件流**：`PlayerKernelEvent` 是给装配层消费的**契约**，
+    /// 往里塞调试文本会污染它（而且 UI 得学会忽略）。日志走独立回调，用完即弃。
     private func emit(_ event: PlayerKernelEvent) {
         apply(event)
         _ = continuation?.yield(event)
@@ -515,8 +604,20 @@ public actor MPVKernel: PlayerKernelProtocol {
         return value != 0
     }
 
-    private func setOption(_ handle: OpaquePointer, _ name: String, _ value: String) {
-        _ = mpv_set_option_string(handle, name, value)
+    /// 设置一个 mpv 选项。
+    ///
+    /// ⚠️ **必须检查返回值**：选项名拼错、或当前 mpv 版本不认识它时，
+    /// `mpv_set_option_string` 只是**返回负值** —— 不抛异常、不打印、不报错。
+    /// 那个选项就**静默不生效**，而代码看上去完全正确（`P-049` 同一族）。
+    /// 失败的项记进 `rejectedOptions`，测试据此断言"我设的每一项 mpv 都认"。
+    @discardableResult
+    private func setOption(_ handle: OpaquePointer, _ name: String, _ value: String) -> Bool {
+        let status = mpv_set_option_string(handle, name, value)
+        guard status >= 0 else {
+            rejectedOptions.append("\(name)=\(value)")
+            return false
+        }
+        return true
     }
 
     private func setProperty(_ handle: OpaquePointer, _ name: String, _ value: String) {
