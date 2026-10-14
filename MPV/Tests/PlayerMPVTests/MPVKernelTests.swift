@@ -524,5 +524,93 @@ struct MPVKernelTests {
         #expect(!snapshot.subtitles.isDisplaying, "换文件后不该还在'显示'上一个文件的字幕")
         await harness.shutdown()
     }
+
+    // MARK: - 播放控制（`stop` / `play` 的真实语义）
+
+    /// **「停止」之后再点「播放」必须能重新播起来。**
+    ///
+    /// 这是实测反馈"点播放按钮无效"的第一种情形：mpv 的 `stop` 命令会**清空播放列表**，
+    /// 此后 `pause=no` 不会让任何东西播起来 —— 必须把文件重新放回去。
+    /// 「停止 → 播放」在播放器语义里就是「从头再播一次」。
+    @Test
+    func testPlayAfterStopResumesFromStart() async throws {
+        let url = try await TestClip.makeURL()
+        defer { TestClip.remove(url) }
+        let harness = await KernelHarness()
+
+        try await harness.kernel.load(PlayerResource(url: url))
+        try await harness.waitFor("先进入 .playing") { $0 == .stateChanged(.playing) }
+
+        await harness.kernel.stop()
+        try await waitUntil("回到 .idle") { await harness.kernel.snapshot().state == .idle }
+
+        await harness.kernel.play()
+
+        let resumed = (try? await waitUntil("stop 之后 play 应重新播起来", timeout: .seconds(12)) {
+            await harness.kernel.snapshot().state == .playing
+        }) != nil
+        let states = await harness.states()
+        #expect(
+            resumed,
+            "「停止」会清空 mpv 播放列表 ⇒ 此时设 pause=no 不会让任何东西播起来。实测状态序列：\(states)"
+        )
+        await harness.shutdown()
+    }
+
+    /// **播完之后点「播放」应从头重播**，而不是停在末帧"看起来没反应"。
+    ///
+    /// `keep-open=yes` 下 mpv 停在末尾且 `pause=yes`，此时设 `pause=no` 只会在末帧上
+    /// 立刻再次 EOF ⇒ 用户按下播放键但画面不动。
+    @Test
+    func testPlayAfterFinishRestartsFromBeginning() async throws {
+        let url = try await TestClip.makeURL()
+        defer { TestClip.remove(url) }
+        let harness = await KernelHarness()
+
+        try await harness.kernel.load(PlayerResource(url: url))
+        try await harness.waitFor("播完", timeout: .seconds(25)) { $0 == .stateChanged(.finished) }
+
+        await harness.kernel.play()
+
+        let restarted = (try? await waitUntil("应从头重新推进", timeout: .seconds(15)) {
+            let snapshot = await harness.kernel.snapshot()
+            return snapshot.state == .playing && snapshot.currentTime < TestClip.duration - 0.5
+        }) != nil
+        let snapshot = await harness.kernel.snapshot()
+        #expect(
+            restarted,
+            "播完后 play 应从头重播；实测 \(snapshot.state) @ \(snapshot.currentTime) s"
+        )
+        await harness.shutdown()
+    }
+
+    /// **`pause=no` 不等于「正在播放」。**
+    ///
+    /// 实测：暂停中按「停止」，mpv 会把 `pause` 重置为 `no`。
+    /// 若把这条属性变化直接当状态，
+    /// 内核自己的 `state` 会被污染成 `.playing` —— 而实际上已经停了。
+    @Test
+    func testStopWhilePausedDoesNotLookLikePlaying() async throws {
+        let url = try await TestClip.makeURL()
+        defer { TestClip.remove(url) }
+        let harness = await KernelHarness()
+
+        try await harness.kernel.load(PlayerResource(url: url))
+        try await harness.waitFor("先进入 .playing") { $0 == .stateChanged(.playing) }
+        await harness.kernel.pause()
+        try await waitUntil("进入 .paused") { await harness.kernel.snapshot().state == .paused }
+
+        await harness.kernel.stop()
+        try await waitUntil("回到 .idle") { await harness.kernel.snapshot().state == .idle }
+        // 给 `pause` 的连带变化（`yes` → `no`）一个到达的机会
+        try? await Task.sleep(for: .milliseconds(500))
+
+        let snapshot = await harness.kernel.snapshot()
+        #expect(
+            snapshot.state == .idle,
+            "stop 之后 pause 被重置为 no，不该把状态拽回 .playing；实测 \(snapshot.state)"
+        )
+        await harness.shutdown()
+    }
 }
 #endif

@@ -53,6 +53,11 @@ private final class MPVHandleOwner: @unchecked Sendable {
 public actor MPVKernel: PlayerKernelProtocol {
     private var owner: MPVHandleOwner?
     private let windowEmbedHandle: Int64?
+    /// 最近一次加载的资源。
+    ///
+    /// 存在的唯一理由是 `play()`：mpv 的 `stop` 会清空播放列表，
+    /// 想"停止后再播"就必须把文件**重新放回去**（见 `play()` 的说明）。
+    private var lastResource: PlayerResource?
     private var continuation: AsyncStream<PlayerKernelEvent>.Continuation?
     private var state: PlayerState = .idle
     private var currentTime: Double = 0
@@ -105,22 +110,51 @@ public actor MPVKernel: PlayerKernelProtocol {
 
     public func load(_ resource: PlayerResource) async throws {
         let handle = try prepare()
+        lastResource = resource
         emit(.stateChanged(.preparing))
         try send(handle, ["loadfile", resource.url.absoluteString, "replace"])
     }
 
-    /// **不在这里上报状态。** `pause` 是 mpv 的**权威可观测属性**，状态一律由 `applyProperty` 观察得到
-    /// ⇒ 命令只负责"发出请求"，状态由内核回执。这样 mpv 内部产生的暂停（缓存 / EOF / `keep-open`）也不会漏。
-    /// 对照：`load()` 的 `.preparing` 与 `stop()` 的 `.idle` **没有**对应的可观测属性，才保留乐观上报。
+    /// 开始播放。
+    ///
+    /// ⚠️ **不是简单地置 `pause=no`** —— 那在两种常见情形下什么都不做：
+    ///
+    /// ① **「停止」之后**：mpv 的 `stop` 命令会**清空播放列表**，此后没有文件可播，
+    ///    `pause=no` 不会让任何东西动起来。「停止 → 播放」在播放器语义里就是
+    ///    **「从头再播一次」**，所以必须把上一个文件重新放回去。
+    /// ② **播完之后**（`keep-open=yes` 停在末帧）：只置 `pause=no` 会在原地**立刻再次 EOF**，
+    ///    表现是"按了播放但画面不动"。这时要**先回开头**。
+    ///
+    /// 两条都是实测出来的（见 `MPVKernelTests` 里对应的两条用例）——
+    /// 它们共同的症状是**「点了没反应」**，而代码看上去完全正确。
     public func play() async {
         guard let handle = owner?.pointer else { return }
+
+        if isPlaylistEmpty(handle) {
+            guard let lastResource else { return }
+            // 重载之前先把 `pause` 放开：它是个**全局属性**，`loadfile` 之后会保持原值，
+            // 若停止时恰好是暂停态，重载出来的新播放会一动不动。
+            setProperty(handle, "pause", "no")
+            emit(.stateChanged(.preparing))
+            try? send(handle, ["loadfile", lastResource.url.absoluteString, "replace"])
+            return
+        }
+
+        if state == .finished {
+            // 回开头再放开暂停。`seek` 之后 `eof-reached` 会自动回到 false，
+            // 而那条属性只在"变真"时上报，所以这一步不会多报状态。
+            try? send(handle, ["seek", "0", "absolute+exact"])
+        }
         setProperty(handle, "pause", "no")
+        // 命令之后**主动回读**，不坐等"变化"通知：同值不通知（`P-038` 同源）。
+        emitPauseState()
     }
 
     /// 理由同 `play()`。
     public func pause() async {
         guard let handle = owner?.pointer else { return }
         setProperty(handle, "pause", "yes")
+        emitPauseState()
     }
 
     public func stop() async {
@@ -305,11 +339,24 @@ public actor MPVKernel: PlayerKernelProtocol {
     /// mpv 于是**不发** `MPV_EVENT_PROPERTY_CHANGE` ⇒ 新文件明明在放，
     /// 状态却永久停在 `.readyToPlay`（事件流里 `currentTimeChanged` 一路推进，状态不动）。
     /// 只依赖"变化"通知，等于把"当前值"这件事交给了一个只报告差异的信号。
+    ///
+    /// ⚠️ **先确认"有文件在播"再解读 `pause`**（见 `isPlaylistEmpty`）——
+    /// 判据不是"pause 等于什么"，而是"有没有东西可以被 pause"。
     private func emitPauseState() {
         guard let handle = owner?.pointer else { return }
+        guard !isPlaylistEmpty(handle) else { return }
         var flag: Int32 = 0
         guard mpv_get_property(handle, "pause", MPV_FORMAT_FLAG, &flag) >= 0 else { return }
         emit(.stateChanged(flag != 0 ? .paused : .playing))
+    }
+
+    /// 播放列表是否为空。
+    ///
+    /// **`pause=no` 不等于「正在播放」**：`stop` 之后播放列表为空，
+    /// 而 mpv 此时的 `pause` 同样是 `no`。少这一层判断的后果很具体 ——
+    /// "停止后按暂停"会把内核状态读成 `.playing`，而它其实什么都没在播。
+    private func isPlaylistEmpty(_ handle: OpaquePointer) -> Bool {
+        (getInt64(handle, "playlist-count") ?? 0) == 0
     }
 
     /// **必须按 `reason` 分派。** 无条件报 `.finished` 会让坏文件永远进不了 `.failed` ——
@@ -332,6 +379,9 @@ public actor MPVKernel: PlayerKernelProtocol {
         case "paused-for-cache":
             emit(.bufferingChanged(UnsafePointer<Int32>(OpaquePointer(data)).pointee != 0))
         case "pause":
+            // 同 `emitPauseState()`：**先确认有文件在播**再解读这条属性。
+            // 没有这一层，"停止后 mpv 把 pause 重置为 no"会被读成"开始播放了"。
+            guard let handle = owner?.pointer, !isPlaylistEmpty(handle) else { return }
             emit(.stateChanged(UnsafePointer<Int32>(OpaquePointer(data)).pointee != 0 ? .paused : .playing))
         case "audio-params/samplerate":
             let rate = Int(UnsafePointer<Int64>(OpaquePointer(data)).pointee)
