@@ -141,3 +141,90 @@ struct PlayerViewModelChromeTests {
                 "退出播放器后字幕副本要清掉 —— 残留会让人以为字幕是自己冒出来的")
     }
 }
+
+/// 控制层显隐策略。
+///
+/// 三条前提（**可见 + 播放中 + 未按住**）缺一不可，所以分开断言 ——
+/// 合并成一条的话，将来少了一条只会看到"隐藏坏了"，看不出是哪一条。
+@Suite
+struct PlayerChromeModelTests {
+    @Test
+    func testStartsVisible() {
+        let model = PlayerChromeModel()
+
+        #expect(model.isVisible, "首帧必须显示 —— 一进来一片黑，用户不知道该点哪")
+        #expect(!model.holdsOpen)
+    }
+
+    @Test
+    func testTapTogglesVisibility() {
+        var model = PlayerChromeModel()
+
+        model.toggle()
+        #expect(!model.isVisible)
+
+        model.toggle()
+        #expect(model.isVisible)
+    }
+
+    @Test
+    func testAutoHideRequiresPlaying() {
+        var model = PlayerChromeModel()
+
+        #expect(!model.shouldAutoHide(isPlaying: false), "暂停时不收起：用户十次有九次正要操作")
+        // ⚠️ `autoHide` 是 `mutating`，不能直接放进 `#expect` 的 autoclosure（P-029）。
+        let hidWhilePaused = model.autoHide(isPlaying: false)
+        #expect(!hidWhilePaused)
+        #expect(model.isVisible)
+    }
+
+    @Test
+    func testAutoHideRequiresVisible() {
+        var model = PlayerChromeModel()
+        model.toggle()
+
+        #expect(!model.shouldAutoHide(isPlaying: true), "已经藏起来了，没有东西可隐")
+        let hidAgain = model.autoHide(isPlaying: true)
+        #expect(!hidAgain)
+    }
+
+    @Test
+    func testAutoHideBlockedWhileHoldingOpen() {
+        var model = PlayerChromeModel()
+        model.beginHoldingOpen()
+
+        #expect(!model.shouldAutoHide(isPlaying: true), "手指还在滑块上，控制层不能走")
+        let hidWhileHeld = model.autoHide(isPlaying: true)
+        #expect(!hidWhileHeld)
+        #expect(model.isVisible)
+
+        model.endHoldingOpen()
+        #expect(model.shouldAutoHide(isPlaying: true), "松手后恢复可隐藏")
+    }
+
+    @Test
+    func testAutoHideHidesAndReportsIt() {
+        var model = PlayerChromeModel()
+
+        let hid = model.autoHide(isPlaying: true)
+        #expect(hid)
+        #expect(!model.isVisible, "到点就该收起来")
+        let hidSecondTime = model.autoHide(isPlaying: true)
+        #expect(!hidSecondTime, "第二次应如实答 false —— 调用方据此停掉计时器，别空转")
+    }
+
+    @Test
+    func testBeginHoldingShowsChrome() {
+        var model = PlayerChromeModel()
+        model.toggle()
+
+        model.beginHoldingOpen()
+
+        #expect(model.isVisible, "要拖就得先看得见它在哪")
+    }
+
+    @Test
+    func testAutoHideIntervalIsUsable() {
+        #expect(PlayerChromeModel().autoHideInterval > 0)
+    }
+}

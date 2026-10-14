@@ -29,6 +29,8 @@ public final class PlayerViewModel {
     public private(set) var scrub = PlayerScrubModel()
     /// 全屏状态（纯逻辑）。
     public private(set) var fullscreen = PlayerFullscreenModel()
+    /// 控制层显隐（纯逻辑）。点画面 toggle，播放中自动隐藏，暂停时保持显示。
+    public private(set) var chrome = PlayerChromeModel()
     /// 字幕状态（轨道清单 / 选中项 / 开关 / 延迟）。**来自内核**，不是界面自己记的。
     public private(set) var subtitles = PlayerSubtitleState()
     /// 字幕加载结果的一行字（编码 / 格式 / 丢了几块）。
@@ -110,6 +112,27 @@ public final class PlayerViewModel {
         fullscreen.toggle()
     }
 
+    /// 点画面：显示 ↔ 隐藏控制层。
+    public func toggleChrome() {
+        chrome.toggle()
+    }
+
+    /// 拖拽 / 菜单期间按住控制层，不让它自动消失。
+    public func beginChromeHold() {
+        chrome.beginHoldingOpen()
+    }
+
+    public func endChromeHold() {
+        chrome.endHoldingOpen()
+    }
+
+    /// 自动隐藏计时到点。返回**是否真的隐藏了** —— `false` 时调用方不该再排队下一次计时
+    /// （否则一个隐藏不了的界面会永远空转计时器）。
+    @discardableResult
+    public func autoHideChrome() -> Bool {
+        chrome.autoHide(isPlaying: isPlaying)
+    }
+
     /// 开关取反：**只发命令**，状态等内核回执（`sub-visibility` 是可观测属性 —— 同 `P2-T5` 的原则）。
     public func toggleSubtitles() async {
         await controller.toggleSubtitleVisibility()
@@ -164,11 +187,19 @@ public final class PlayerViewModel {
     public func seek(to seconds: Double) async { await controller.seek(to: seconds) }
 
     /// 按下进度条：**先暂停**。不暂停的话，手指还在拖、声音还在往前走，听起来像坏了。
-    public func beginScrub() async {
+    ///
+    /// ⚠️ 这个方法是**同步**的，故意的。视图层的手势回调是同步的：
+    /// `onBegan()` 之后**紧接着**就是 `onChanged()`。如果这里 `await` 一下（原来的写法），
+    /// 拖拽状态要等下一个 runloop 才确立，而 `updateScrub` 里的 `guard isScrubbing`
+    /// 会把**第一下点击整个丢掉** —— 症状正是"点进度条没反应，要拖才生效"。
+    /// 暂停是内核动作，可以异步发；**拖拽状态必须当场确立**。
+    public func beginScrub() {
         guard !scrub.isScrubbing else { return }
+        // 拖拽期间控制层必须留着：手指还在滑块上，层没了就没法继续拖。
+        chrome.beginHoldingOpen()
         scrub.begin(currentTime: currentTime, isPlaying: isPlaying)
         if scrub.wasPlayingBeforeScrub {
-            await controller.pause()
+            Task { await controller.pause() }
         }
     }
 
@@ -178,12 +209,16 @@ public final class PlayerViewModel {
     }
 
     /// 松手：**这一次**才发 seek；本来在播就恢复播放。
-    public func endScrub() async {
+    public func endScrub() {
+        // 先松"按住"：下面的 guard 可能提前返回，漏掉它会让控制层**永远不自动隐藏**。
+        chrome.endHoldingOpen()
         let shouldResume = scrub.wasPlayingBeforeScrub
         guard let target = scrub.end() else { return }
-        await controller.seek(to: target)
-        if shouldResume {
-            await controller.play()
+        Task {
+            await controller.seek(to: target)
+            if shouldResume {
+                await controller.play()
+            }
         }
     }
     public func skip(by delta: Double) async { await controller.seek(to: currentTime + delta) }
@@ -193,6 +228,11 @@ public final class PlayerViewModel {
         switch update {
         case .stateChanged(let newState):
             state = newState
+            // 一旦不在播放，就把控制层露出来 —— 暂停 / 就绪 / 播完 / 失败时用户多半要操作，
+            // 那正是最不该"点完就收走"的时刻。
+            if newState != .playing {
+                chrome.show()
+            }
         case .timeChanged(let time):
             currentTime = time.currentTime
             duration = time.duration

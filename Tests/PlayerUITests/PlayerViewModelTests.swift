@@ -168,6 +168,71 @@ struct PlayerViewModelTests {
         await model.teardown()
         await kernel.finishEvents()
     }
+
+    // MARK: - 控制层显隐（装配层侧）
+
+    @Test
+    func testChromeStartsVisible() async {
+        let (model, kernel) = await makeModel()
+
+        #expect(model.chrome.isVisible, "首帧显示控制层 —— 否则用户不知道点哪")
+
+        await model.teardown()
+        await kernel.finishEvents()
+    }
+
+    @Test
+    func testTogglingChromeFlipsVisibility() async {
+        let (model, kernel) = await makeModel()
+
+        model.toggleChrome()
+        #expect(!model.chrome.isVisible, "点画面第一下应把控制层收走")
+
+        model.toggleChrome()
+        #expect(model.chrome.isVisible)
+
+        await model.teardown()
+        await kernel.finishEvents()
+    }
+
+    /// 状态一旦离开 `.playing`，控制层必须自己回来。
+    /// 这条是「暂停时收起控制层」那个体感问题的防线 —— 用户刚点完暂停就被抢走界面。
+    @Test
+    func testLeavingPlayingBringsChromeBack() async {
+        let (model, kernel) = await makeModel()
+        await model.load(PlayerResource(url: URL(fileURLWithPath: "/tmp/sample.mkv")))
+        await kernel.emit(.stateChanged(.playing))
+        try? await Task.sleep(for: .milliseconds(50))
+
+        model.toggleChrome()
+        #expect(!model.chrome.isVisible)
+
+        await kernel.emit(.stateChanged(.paused))
+        try? await Task.sleep(for: .milliseconds(50))
+
+        #expect(model.chrome.isVisible, "暂停后控制层要回来")
+        await model.teardown()
+        await kernel.finishEvents()
+    }
+
+    /// 拖拽期间必须"按住"控制层：手指还在滑块上，层收走了就没法继续拖。
+    @Test
+    func testScrubbingHoldsChromeOpen() async {
+        let (model, kernel) = await makeModel()
+        await kernel.emit(.durationChanged(100))
+        try? await Task.sleep(for: .milliseconds(50))
+
+        model.beginScrub()
+        #expect(model.chrome.holdsOpen)
+        #expect(model.chrome.isVisible)
+        #expect(!model.chrome.shouldAutoHide(isPlaying: true), "拖拽中不许自动隐藏")
+
+        model.endScrub()
+        #expect(!model.chrome.holdsOpen, "松手后要放开，否则控制层永远不再自动隐藏")
+
+        await model.teardown()
+        await kernel.finishEvents()
+    }
 }
 
 private struct StubFailure: Error {}
@@ -199,4 +264,5 @@ struct PlayerControlBarClockTests {
     func testClockTruncatesRatherThanRounds() {
         #expect(PlayerControlBar.clock(59.9) == "0:59", "进度显示取整不该让 59.9 提前跳成 1:00")
     }
+
 }

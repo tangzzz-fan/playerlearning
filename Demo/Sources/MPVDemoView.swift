@@ -114,25 +114,31 @@ struct MPVDemoView: View {
         VStack(spacing: 0) {
             PlayerScreenView(model: demo.player, surface: demo.surface)
 
-            // 全屏时收起调试按钮（宿主外壳要让位）—— 这是"全屏"该有的样子，
-            // 也是 UI 测试判断"真的进了全屏"的可观察证据。
+            // 全屏时收起调试按钮（宿主外壳要让位）—— 这是"全屏"该有的样子。
+            // 非全屏时也刻意做紧凑：这行是**调试入口**，不该跟播放器抢屏幕
+            // （上一版用默认尺寸 + 长文案，"载入样例"被折成两行，白占一大块）。
             if !demo.player.fullscreen.hidesHostChrome {
-            HStack(spacing: 12) {
-                Button("载入样例") { Task { await demo.loadSample() } }
-                    .accessibilityIdentifier("demo.loadSample")
-                Button("停止") { Task { await demo.player.stop() } }
-                    .accessibilityIdentifier("demo.stop")
-                Button("−10 s") { Task { await demo.player.skip(by: -10) } }
-                    .accessibilityIdentifier("demo.back10")
-                Button("+10 s") { Task { await demo.player.skip(by: 10) } }
-                    .accessibilityIdentifier("demo.forward10")
-                Text(demo.note)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("demo.note")
-            }
-            .buttonStyle(.bordered)
-            .padding(12)
+                HStack(spacing: 8) {
+                    Button("样例") { Task { await demo.loadSample() } }
+                        .accessibilityIdentifier("demo.loadSample")
+                    Button("停止") { Task { await demo.player.stop() } }
+                        .accessibilityIdentifier("demo.stop")
+                    Button("−10s") { Task { await demo.player.skip(by: -10) } }
+                        .accessibilityIdentifier("demo.back10")
+                    Button("+10s") { Task { await demo.player.skip(by: 10) } }
+                        .accessibilityIdentifier("demo.forward10")
+
+                    Text(demo.note)
+                        .font(.caption2)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("demo.note")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
             }
         }
         .task { await demo.start() }

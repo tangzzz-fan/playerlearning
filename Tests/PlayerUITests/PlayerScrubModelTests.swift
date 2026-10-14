@@ -126,7 +126,7 @@ struct PlayerViewModelScrubTests {
         try? await Task.sleep(for: .milliseconds(80))
         #expect(model.displayTime == 20)
 
-        await model.beginScrub()
+        model.beginScrub()
         model.updateScrub(fraction: 0.75)
 
         #expect(model.displayTime == 75, "拖拽中显示预览，而不是内核时间")
@@ -134,7 +134,7 @@ struct PlayerViewModelScrubTests {
 
         // ⚠️ 松手之后不能还被**残留的预览值**劫持（这是上一条变异体存活暴露的缺口：
         //    只断言"拖拽中"的话，把 `isScrubbing` 判断整个删掉也照样绿）。
-        await model.endScrub()
+        model.endScrub()
         try? await Task.sleep(for: .milliseconds(80))
         #expect(model.displayTime == 20, "松手后回到真实播放位置")
         #expect(model.displayProgress == 0.2, "松手后进度必须回到真实进度")
@@ -150,7 +150,7 @@ struct PlayerViewModelScrubTests {
         try? await Task.sleep(for: .milliseconds(80))
         #expect(model.isPlaying)
 
-        await model.beginScrub()
+        model.beginScrub()
         try? await Task.sleep(for: .milliseconds(80))
         #expect(!model.isPlaying, "拖拽期间必须先暂停，否则声音会在手指底下继续走")
         let seeksDuringDrag = await kernel.seekRequests
@@ -158,7 +158,7 @@ struct PlayerViewModelScrubTests {
 
         model.updateScrub(fraction: 0.3)
         model.updateScrub(fraction: 0.6)
-        await model.endScrub()
+        model.endScrub()
         try? await Task.sleep(for: .milliseconds(80))
 
         let requests = await kernel.seekRequests
@@ -172,9 +172,9 @@ struct PlayerViewModelScrubTests {
     func testScrubOnPausedPlayerDoesNotStartPlayback() async {
         let (model, kernel) = await makeModel(duration: 100)
 
-        await model.beginScrub()
+        model.beginScrub()
         model.updateScrub(fraction: 0.5)
-        await model.endScrub()
+        model.endScrub()
         try? await Task.sleep(for: .milliseconds(80))
 
         let requests = await kernel.seekRequests
