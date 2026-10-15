@@ -2,7 +2,7 @@
 
 做一个**自己的 iOS 优先 / macOS 跟进播放器**：libmpv 单内核，本地文件 + 网络点播 + 直播全都要，能播系统播放器播不了的格式（mkv / ASS 特效字幕 / 各种编码）。
 
-**当前状态**：**Phase 0 ~ Phase 4 均已完成**（`G0`/`M0` · `G1`/`M1` · `G2`/`M2` · `G3` · `G4`）；**Phase 5（网络点播）进行中**：`P5-T1`/`P5-T2` 完成，`G5` 未判定（缺可控弱网）。真机（iPhone 16 Pro）已跑通。
+**当前状态**：**Phase 0 ~ Phase 4 均已完成**（`G0`/`M0` · `G1`/`M1` · `G2`/`M2` · `G3` · `G4`）；**Phase 5（网络点播）进行中**：`P5-T1`/`P5-T2` 完成，`G5` 未判定（缺可控弱网）。真机已跑通 —— 两套环境各一台：家里 iPhone 16 Pro（`UKXWZ3FS84`）· 本机 Tang的iPhone（`3GMJYX32U9`），口径见 §⑦。
 
 | 里程碑 | 状态 |
 | --- | --- |
@@ -82,16 +82,31 @@ xcrun simctl launch --console <udid> com.playerstack.demo \
 #   ⚠️ 别用 `python -m http.server`：它不支持 Range ⇒ mp4 会"14 毫秒就播完"，
 #      那是**环境缺口**而不是产品缺陷。`-traceUpdates` 会同时打开**内核自己的日志**。
 
-# ⑦ 真机（iPhone 16 Pro）
+# ⑥b 请求头注入验证（`P5-T4`，验证自定义 HTTP 头能正确发送）
+python3 Tools/serve-range.py --port 8765 --root /tmp/vidprobe2 --echo-headers  # 服务器回显请求头
+xcrun simctl launch --console <udid> com.playerstack.demo \
+  -directURL http://127.0.0.1:8765/sintel_trailer-720p.mp4 \
+  -headers "X-Player-Test: yes,User-Agent: CustomUA/2.0" -traceUpdates
+#   查服务器日志（stderr）看到 `X-Player-Test: yes` 与 `User-Agent: CustomUA/2.0` ⇒ 注入生效
+#   格式：`Key: Value`（逗号分隔多个头），刻意与 mpv 的 `http-header-fields` 一致
+
+# ⑦ 真机（⚠️ 两套 Xcode 环境、两个 team ⇒ 构建时**命令行覆盖**，不改仓库）
+#   环境 A · 家里：team UKXWZ3FS84 · 真机 Tango / iPhone 16 Pro
+#   环境 B · 本机：team 3GMJYX32U9 · 真机 Tang的iPhone      ← `project.yml` 里写的是 A 的值
 cd Demo && xcodegen generate
 xcodebuild -project PlayerStackDemo.xcodeproj -scheme PlayerStackDemo \
   -destination 'id=<真机 UDID，用 xcrun devicectl list devices 现查>' \
-  -derivedDataPath DD-Device build
+  DEVELOPMENT_TEAM=3GMJYX32U9 \
+  -derivedDataPath DD-Device-32U9 build
 xcrun devicectl device install app --device <UDID> \
-  DD-Device/Build/Products/Debug-iphoneos/PlayerStackDemo.app
-#   ⚠️ `Demo/project.yml` 的 `DEVELOPMENT_TEAM` 必须是 **UKXWZ3FS84**（本机真实团队）。
-#      写成别的会报 `No profiles for 'com.playerstack.demo'`，而那条报错**会把你带去查账号** ——
-#      本机已有 Xcode 通配描述文件 + 钥匙串里的 `Apple Development` 证书，**不需要登 Apple ID**。
+  DD-Device-32U9/Build/Products/Debug-iphoneos/PlayerStackDemo.app
+#   ⚠️ 覆盖值必须同时对上两件事：**本机钥匙串里带私钥的 `Apple Development` 证书**
+#      （本机 = `3GMJYX32U9` · `Tang Tango (WU37464V73)`）与**覆盖该设备的通配描述文件**。
+#      对不上会报 `No profiles for 'com.playerstack.demo'` 或
+#      `No "iOS Development" signing certificate matching team ID …` ——
+#      两条报错**都会把你带去查账号**，而真因是**环境不对**（见 `P-055`）。
+#   ⚠️ 本机 Xcode **未登录 Apple ID** ⇒ `-allowProvisioningUpdates` 必报 `No Accounts`，别用；
+#      只吃本机已有的描述文件 + 证书。
 #   ⚠️ 真机上的 `--console` 需要 `--` 把参数与 devicectl 自己的选项隔开（否则 `-traceUpdates`
 #      会被解析成 devicectl 的 `-t`）。
 ```
