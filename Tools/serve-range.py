@@ -29,17 +29,33 @@ mp4 的索引（moov）需要**回退读取**；线性流不能后退 ⇒ 立即
     xcrun devicectl device process launch --device <真机 UDID> --console \\
       --terminate-existing com.playerstack.demo -- -directURL http://192.168.x.x:8765/… -traceUpdates
 
-## 三个"造环境"开关（验证用，产品代码不受影响）
+## 四个"造环境"开关（验证用，产品代码不受影响）
 
 | 开关 | 用途 |
 | --- | --- |
 | `--echo-headers` | 把每个请求收到的**请求头**打到 stderr —— 用来证明"自定义头真的到了服务器"（`P5-T4`），而不是只证明"我调过 setOption" |
 | `--throttle BYTES/S` | 按字节限速 —— 造可控弱网（`G5`） |
 | `--stall-at BYTES --stall-for SECONDS` | 发到第 N 字节后**挂住** SECONDS 秒再继续 —— 造"缓冲中 → 恢复后继续" |
+| `--tls-cert PEM --tls-key PEM` | 用 TLS 起服务（HTTPS）—— 验产品的 **TLS 信任路径**（`P0-T5c`） |
 
 ⚠️ **为什么这些必须在这里做**：`G5` 判"弱网下不崩 + 有缓冲提示 + 恢复后自动继续"，
 而**可控弱网本机没有**。照 `P-052`，在没有可控弱网时得出的任何"通过/不通过"都是
 **把验证环境的能力缺口伪装成产品缺陷** —— 所以先把"能造弱网"补出来，再谈判定。
+
+### 为什么需要 TLS 开关（`P0-T5c`）
+
+`docs/07` 把「TLS 后端从 gnutls 换成 **SecureTransport**」标成**本次唯一带风险的替换**，
+而那一轮**只验了"协议已启用"**，没跑过真实 HTTPS 流（`docs/07` L161）。本开关就是为它补的环境。
+
+**为什么要自签而不是随便找个公网 HTTPS 站点**：SecureTransport = **Apple 系统 TLS** ⇒
+信任判断走 **iOS 系统信任库**。要验的恰恰是"**校验到底有没有在生效**"，
+而公网站点的证书**本来就受信任**，只能证"能播"，证不了"不受信任时会拒"。
+自签能一次把两件事都钉死（不信任必须失败 / 装了 CA 必须成功），
+再配合"把 CA 去掉又失败"就能**闭合因果**。
+
+⚠️ 自签证书是**一次性环境**（放 `/tmp`，不入仓库）。证书本身要满足 Apple 的门槛：
+SAN 必填、`extendedKeyUsage=serverAuth`、RSA ≥2048、有效期 ≤825 天 ——
+少一条会得到"看起来像校验失败、其实是证书不合规"的**另一种失败**。
 """
 
 from __future__ import annotations
@@ -47,6 +63,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import ssl
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -197,8 +214,33 @@ class RangeHandler(BaseHTTPRequestHandler):
         sys.stderr.write(f"[range] {self.address_string()} {fmt % args}\n")
 
 
+class TLSServer(ThreadingHTTPServer):
+    """`ThreadingHTTPServer` + **把 TLS 握手失败记成一行服务端证据**。
+
+    为什么非记不可：客户端**拒绝我们的证书**时，异常在**服务端这一侧**就以
+    `tlsv1 alert unknown ca` 的形式出现 —— 这是"客户端**确实做了校验并拒绝**"的直接证据。
+    只看客户端那边"没收货"是不够的：那与"压根没连上 / 路径写错"**看起来一模一样**
+    （同 `P-056` 的判据：不同病因会给出同一个症状，就先去找能把它们分开的那条证据）。
+    """
+
+    def get_request(self):  # type: ignore[no-untyped-def]
+        try:
+            return super().get_request()
+        except (ssl.SSLError, OSError) as exc:
+            sys.stderr.write(f"[tls] 握手失败：{exc}\n")
+            sys.stderr.flush()
+            raise
+
+    def handle_error(self, request, client_address):  # type: ignore[no-untyped-def]
+        # TLS 失败上面已经记过了 ⇒ 不再叠一整段 traceback：
+        # 噪音会把结论埋掉（`P-058` 的形态：取证通道自己先吵起来）。
+        if isinstance(sys.exc_info()[1], ssl.SSLError):
+            return
+        super().handle_error(request, client_address)
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="支持 Range 的静态服务器（点播 / 弱网验证用）")
+    parser = argparse.ArgumentParser(description="支持 Range 的静态服务器（点播 / 弱网 / TLS 验证用）")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--root", default=".")
     # ⚠️ 默认只听回环（模拟器用 `127.0.0.1` 就够）。**真机必须 `--host 0.0.0.0`**：
@@ -208,19 +250,38 @@ def main() -> int:
     parser.add_argument("--throttle", type=int, default=0, help="限速，单位 字节/秒（0 = 不限）")
     parser.add_argument("--stall-at", type=int, default=0, help="在这个文件偏移处挂住（0 = 不挂）")
     parser.add_argument("--stall-for", type=float, default=0.0, help="挂住多少秒")
+    parser.add_argument("--tls-cert", help="PEM 证书链；给了它就起 HTTPS（`P0-T5c`）")
+    parser.add_argument("--tls-key", help="PEM 私钥；必须与 --tls-cert 成对出现")
     options = parser.parse_args()
+
+    if bool(options.tls_cert) != bool(options.tls_key):
+        parser.error("--tls-cert 与 --tls-key 必须成对给出（只给一半会静默退回明文，那比报错更坏）")
 
     RangeHandler.root = os.path.abspath(options.root)
     RangeHandler.echo_headers = options.echo_headers
     RangeHandler.throttle = options.throttle
     RangeHandler.stall_at = options.stall_at
     RangeHandler.stall_for = options.stall_for
-    server = ThreadingHTTPServer((options.host, options.port), RangeHandler)
+    server = TLSServer((options.host, options.port), RangeHandler)
+
+    scheme = "http"
+    if options.tls_cert and options.tls_key:
+        # 包的是**监听 socket**：此后 accept 出来的连接都完成过握手。
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certfile=options.tls_cert, keyfile=options.tls_key)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        scheme = "https"
+
     sys.stderr.write(
-        f"[range] serving {RangeHandler.root} on http://{options.host}:{options.port}"
+        f"[range] serving {RangeHandler.root} on {scheme}://{options.host}:{options.port}"
         f" · throttle={options.throttle} B/s · stall@{options.stall_at} for {options.stall_for}s"
         f" · echo_headers={options.echo_headers}\n"
     )
+    if scheme == "https":
+        # 这条提示是刻意的：客户端**必须先在信任库里认这份 CA**，否则连不上（那正是要验的反向）。
+        sys.stderr.write(
+            "[tls] 客户端要先用 `xcrun simctl keychain <udid> add-root-cert <ca.crt>` 信任签发者\n"
+        )
     server.serve_forever()
     return 0
 
