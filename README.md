@@ -2,14 +2,14 @@
 
 做一个**自己的 iOS 优先 / macOS 跟进播放器**：libmpv 单内核，本地文件 + 网络点播 + 直播全都要，能播系统播放器播不了的格式（mkv / ASS 特效字幕 / 各种编码）。
 
-**当前状态**：**Phase 0 ~ Phase 4 均已完成** —— `G0`/`M0`（路线成立）· `G1`/`M1`（地基可测）· `G2`/`M2`（能看片）· `G3`（UI 最小闭环）· `G4`（字幕）全部达成。
+**当前状态**：**Phase 0 ~ Phase 4 均已完成**（`G0`/`M0` · `G1`/`M1` · `G2`/`M2` · `G3` · `G4`）；**Phase 5（网络点播）进行中**：`P5-T1`/`P5-T2` 完成，`G5` 未判定（缺可控弱网）。真机（iPhone 16 Pro）已跑通。
 
 | 里程碑 | 状态 |
 | --- | --- |
 | M0 路线成立 | ✅ 自建动态 LGPL-2.1 libmpv 产物，模拟器与真机（iPhone 16 Pro）双通出画面 |
 | M1 地基可测 | ✅ 内核边界已立（`PlayerKernelProtocol` / 注册表 / `FakeKernel` / 状态机 / 时间模型）· `PlayerCore` 零 UI 依赖 |
 | M2 能看片 | ✅ 出画 + 出声 + `seek` 精确 + 播完报 `.finished`（[`docs/10`](docs/10-P2验证报告.md)） |
-| M3 能顺手用 | **◑ 缺三项**：① **真机校准**（音轨使模拟器首屏 60 ms → 1.97 s，模拟器数字不可信）② **手动长跑**（30 min：内存是否增长 / 音频输出是否掉线）③ 字幕菜单在真机手势下的可用性 |
+| M3 能顺手用 | **◑**：① **真机校准 ✅**（真机首屏出声出画 ≈0.20 s；模拟器那个 1.97 s 是 MoltenVK 管线编译的代价，**与音轨无关，真机未复现**）② 真机长跑**只跑了 ≈3 min/18 轮**（阶梯后持平，无泄漏迹象，但**不据此推断 30 min**）③ 字幕菜单真机手势仍待手测 |
 | 端到端素材 | **Sintel trailer 720p（CC BY · 1280×720 · 48 kHz 立体声 · 52 s）**运行时下载，另有 W3C 镜像与 MDN `flower` 两级备用；离线退回本地生成；**用哪一个是哪个会打印出来** |
 
 **验收标准就一条：项目能正确运行，`swift test` 全绿**（命令见下）。
@@ -68,12 +68,32 @@ xcrun simctl launch --console <udid> com.playerstack.demo -soakRounds 30
 #   ⇒ [soak] round N/30 · t=… · footprint=… MB · state=idle
 #   180 轮 ≈ 30 min（`M3` 门槛那个量级）。判据：**单调线性 = 泄漏；阶梯后持平 = 预热**。
 
+# ⑤b **播完 → 再点播放**（`-exerciseFinish`，走与按钮完全相同的 action）
+xcrun devicectl device process launch --device <真机 UDID> --console \
+  --terminate-existing com.playerstack.demo -- -exerciseFinish -traceUpdates
+#   ⇒ [finish] 播到末尾 → state/位置/进度 · 等 2 秒后 → … · 点播放 3 秒后 → …
+#   ⚠️ 它证明的是**按钮按下之后**那段。重播必须走 `finished → preparing → readyToPlay → playing`；
+#      界面停在 finished 就说明那条边没报（见 P-053）。
+
 # ⑥ 网络点播验证（**必须用支持 Range 的服务器**，见 P-052）
 python3 Tools/serve-range.py --port 8765 --root /tmp/vidprobe2     # 一个终端
 xcrun simctl launch --console <udid> com.playerstack.demo \
   -directURL http://127.0.0.1:8765/sintel_trailer-720p.mp4 -traceUpdates
 #   ⚠️ 别用 `python -m http.server`：它不支持 Range ⇒ mp4 会"14 毫秒就播完"，
 #      那是**环境缺口**而不是产品缺陷。`-traceUpdates` 会同时打开**内核自己的日志**。
+
+# ⑦ 真机（iPhone 16 Pro）
+cd Demo && xcodegen generate
+xcodebuild -project PlayerStackDemo.xcodeproj -scheme PlayerStackDemo \
+  -destination 'id=<真机 UDID，用 xcrun devicectl list devices 现查>' \
+  -derivedDataPath DD-Device build
+xcrun devicectl device install app --device <UDID> \
+  DD-Device/Build/Products/Debug-iphoneos/PlayerStackDemo.app
+#   ⚠️ `Demo/project.yml` 的 `DEVELOPMENT_TEAM` 必须是 **UKXWZ3FS84**（本机真实团队）。
+#      写成别的会报 `No profiles for 'com.playerstack.demo'`，而那条报错**会把你带去查账号** ——
+#      本机已有 Xcode 通配描述文件 + 钥匙串里的 `Apple Development` 证书，**不需要登 Apple ID**。
+#   ⚠️ 真机上的 `--console` 需要 `--` 把参数与 devicectl 自己的选项隔开（否则 `-traceUpdates`
+#      会被解析成 devicectl 的 `-t`）。
 ```
 
 > **构建/测试环境（沙箱逃逸、挑模拟器、toybox shim）用现成的技能，别在项目里再包一层：**
@@ -152,7 +172,7 @@ playerlearning/
 | 2 内核接入 | `G2` / `M2` | ✅ 出画 + 出声 + `seek` 精确 + 播完报 `.finished`（[`docs/10`](docs/10-P2验证报告.md)） |
 | 3 UI 最小闭环 | `G3` | ✅ 播放/暂停 · 时间 · 进度条+拖拽 · 全屏 · 字幕开关 · 文件选择（[`docs/11`](docs/11-P3验证报告.md)） |
 | 4 字幕 | `G4` | ✅ SRT 中文不乱码 · ASS 能加载渲染 · 字幕延迟可调（[`docs/03`](docs/03-路线图.md) 的 📌） |
-| 5 网络点播 | `G5` | ⬜ 未开始 |
+| 5 网络点播 | `G5` | ◑ `P5-T1`/`P5-T2` 完成（真机直连 http → playing）· `G5` 未判定（缺可控弱网） |
 | 6 直播 | `G6` | ⬜ 未定（见 `docs/03` §5） |
 | 7 macOS | `G7` | ⬜ 未开始 |
 
