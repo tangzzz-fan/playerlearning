@@ -34,6 +34,13 @@ targets:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+        # ⚠️ **少了这个 key，App 连不到局域网里的任何地址**（实测：真机直连宿主机的
+        #    `http://192.168.x.x:8765/…` 在 **6 毫秒**内报 `tcp: … failed: No route to host`
+        #    —— 包根本没发出去；Mac 侧防火墙是关的、服务也确实在 `*:8765` 上监听）。
+        #    iOS 14+ 把"访问本地网络"变成了一项**用户授权**，没有用途说明就没有授权入口。
+        #    这**不只是演示需要**：局域网 NAS / 自建 HTTP 源是播放器的常见来源，
+        #    产品在第一次做局域网点播时同样必须有它。
+        NSLocalNetworkUsageDescription: 用于播放局域网内的视频源（NAS / 自建 HTTP 服务器）。
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.playerstack.demo
@@ -55,7 +62,13 @@ targets:
       - package: PlayerMPV
         product: PlayerMPV
     info:
-      path: Info.plist
+      # ⚠️ **两个 target 不能共用同一个 `Info.plist` 路径**：xcodegen 会**都往同一个文件写**，
+      #    后写的那份**整个覆盖**前一份（不合并、不报错）。
+      #    实测（2026-10-15）：加了 macOS target 之后，生成出来的 `Demo/Info.plist` 里只剩
+      #    macOS 的 `LSMinimumSystemVersion`，**iOS 的 `UISupportedInterfaceOrientations`
+      #    与 `UILaunchScreen` 全没了** —— 而 iOS 侧一切"照常能跑"，只有打包出来的包是坏的
+      #    （横屏支持与启动屏配置静默丢失）。这类错误**不报错，只表现为配置不见了**。
+      path: Info-macOS.plist
       properties:
         CFBundleDisplayName: PlayerStack
         LSMinimumSystemVersion: "14.0"

@@ -12,6 +12,7 @@ __pycache__/
 
 Demo/*.xcodeproj/
 Demo/Info.plist
+Demo/Info-macOS.plist
 Demo/DD/
 Demo/DD-*/
 
