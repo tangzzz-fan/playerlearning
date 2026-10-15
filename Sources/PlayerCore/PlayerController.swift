@@ -9,6 +9,7 @@ public actor PlayerController {
     private var naturalSize: CGSize = .zero
     private var audio = PlayerAudioState()
     private var subtitles = PlayerSubtitleState()
+    private var videoTracks = PlayerVideoTrackState()
     private var continuation: AsyncStream<PlayerControllerUpdate>.Continuation?
     private var pump: Task<Void, Never>?
 
@@ -44,7 +45,8 @@ public actor PlayerController {
             isBuffering: isBuffering,
             naturalSize: naturalSize,
             audio: audio,
-            subtitles: subtitles
+            subtitles: subtitles,
+            videoTracks: videoTracks
         )
     }
 
@@ -75,6 +77,16 @@ public actor PlayerController {
 
     public func selectSubtitleTrack(id: Int64?) async {
         await kernel.selectSubtitleTrack(id: id)
+    }
+
+    /// 切清晰度（= 切视频轨）。
+    ///
+    /// **转发即完，不本地乐观改状态** —— 与字幕轨选择同一条理由：
+    /// 内核可能**不接受**这次选择（id 已失效 / 该档已被清掉），
+    /// 而状态最终以内核回读为准。乐观上报在这里会说谎：
+    /// 界面显示"已切到 480p"而画面还是 720p —— 用户会当成 bug。
+    public func selectVideoTrack(id: Int64) async {
+        await kernel.selectVideoTrack(id: id)
     }
 
     /// 可见性：**本地先生效，再以内核回执为准**。
@@ -153,6 +165,10 @@ public actor PlayerController {
             guard state != subtitles else { return }
             subtitles = state
             continuation?.yield(.subtitlesChanged(state))
+        case .videoTracksChanged(let state):
+            guard state != videoTracks else { return }
+            videoTracks = state
+            continuation?.yield(.videoTracksChanged(state))
         }
     }
 

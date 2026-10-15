@@ -34,6 +34,12 @@ public struct PlayerControlBar: View {
     private let selectedSubtitleTrackID: Int64?
     private let subtitleDelay: Double
 
+    /// 视频轨状态 = 界面上的「清晰度」。
+    ///
+    /// 传**整个状态**而不是拆成 `tracks` / `id` 两个参数：这一层需要的判断
+    /// （「有没有可选项」「当前是哪一档」）都由它承担，拆开就等于把同一套规则抄两遍。
+    private let videoTracks: PlayerVideoTrackState
+
     private let onTogglePlay: () -> Void
     private let onScrubBegan: () -> Void
     private let onScrubChanged: (Double) -> Void
@@ -42,6 +48,7 @@ public struct PlayerControlBar: View {
     private let onToggleSubtitles: () -> Void
     private let onSelectSubtitle: (Int64?) -> Void
     private let onAdjustSubtitleDelay: (Double) -> Void
+    private let onSelectVideoTrack: (Int64) -> Void
     private let onOpenFile: () -> Void
     private let onOpenSubtitle: () -> Void
 
@@ -61,6 +68,7 @@ public struct PlayerControlBar: View {
         subtitleTracks: [SubtitleTrack],
         selectedSubtitleTrackID: Int64?,
         subtitleDelay: Double,
+        videoTracks: PlayerVideoTrackState = PlayerVideoTrackState(),
         onTogglePlay: @escaping () -> Void,
         onScrubBegan: @escaping () -> Void,
         onScrubChanged: @escaping (Double) -> Void,
@@ -69,6 +77,7 @@ public struct PlayerControlBar: View {
         onToggleSubtitles: @escaping () -> Void,
         onSelectSubtitle: @escaping (Int64?) -> Void,
         onAdjustSubtitleDelay: @escaping (Double) -> Void,
+        onSelectVideoTrack: @escaping (Int64) -> Void = { _ in },
         onOpenFile: @escaping () -> Void,
         onOpenSubtitle: @escaping () -> Void
     ) {
@@ -84,6 +93,7 @@ public struct PlayerControlBar: View {
         self.subtitleTracks = subtitleTracks
         self.selectedSubtitleTrackID = selectedSubtitleTrackID
         self.subtitleDelay = subtitleDelay
+        self.videoTracks = videoTracks
         self.onTogglePlay = onTogglePlay
         self.onScrubBegan = onScrubBegan
         self.onScrubChanged = onScrubChanged
@@ -92,6 +102,7 @@ public struct PlayerControlBar: View {
         self.onToggleSubtitles = onToggleSubtitles
         self.onSelectSubtitle = onSelectSubtitle
         self.onAdjustSubtitleDelay = onAdjustSubtitleDelay
+        self.onSelectVideoTrack = onSelectVideoTrack
         self.onOpenFile = onOpenFile
         self.onOpenSubtitle = onOpenSubtitle
     }
@@ -133,6 +144,8 @@ public struct PlayerControlBar: View {
                 Spacer(minLength: 4)
 
                 iconButton("openFile", systemImage: "folder") { onOpenFile() }
+
+                videoTrackMenu
 
                 subtitleMenu
 
@@ -180,6 +193,45 @@ public struct PlayerControlBar: View {
         // `.disabled` 在视频画面上不够明显（系统那点变灰看不出来）⇒ 再压一层透明度。
         .opacity(isEnabled ? 1 : 0.35)
         .accessibilityIdentifier("player.\(identifier)")
+    }
+
+    /// 清晰度菜单 —— **只在真的有多档时才出现**。
+    ///
+    /// 单码率（普通 mp4 / 单档 HLS）只有 1 条视频轨 ⇒ 菜单里只有一项，
+    /// 点它也不会有任何变化 ⇒ 显示出来纯粹是噪音（`docs/14` §三 已记下这个取舍）。
+    /// 所以这里是**整条隐藏**，而不是"置灰一个只有一项的菜单"。
+    ///
+    /// 图标选 `rectangle.ratio.16.to.9`：这个入口调的就是**画面尺寸**本身，
+    /// 用齿轮 / 滑块会让人以为里面装的是设置项。
+    @ViewBuilder
+    private var videoTrackMenu: some View {
+        if videoTracks.hasAlternatives {
+            Menu {
+                ForEach(videoTracks.tracks) { track in
+                    Button {
+                        onSelectVideoTrack(track.id)
+                    } label: {
+                        if track.id == videoTracks.selectedTrackID {
+                            Label(track.label, systemImage: "checkmark")
+                        } else {
+                            Text(track.label)
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "rectangle.ratio.16.to.9")
+                    .font(.body)
+                    .frame(width: Self.minimumTouchTarget, height: Self.minimumTouchTarget)
+                    .contentShape(Rectangle())
+            }
+            .foregroundStyle(.white)
+            // 没加载文件时内核连句柄都没有，切档会静默失败 ⇒ 灰掉。
+            .disabled(!canControl)
+            .opacity(canControl ? 1 : 0.35)
+            .accessibilityIdentifier("player.videoTracks")
+            // 菜单的**可读标签**要如实说出当前档位，不能只画一个图标糊过去。
+            .accessibilityLabel(canControl ? videoTracks.label : "清晰度（先打开视频）")
+        }
     }
 
     /// 字幕菜单：**开关 · 轨道选择 · 延迟调节** 三件事收在一处。

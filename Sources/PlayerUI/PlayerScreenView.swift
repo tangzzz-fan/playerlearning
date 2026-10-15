@@ -107,6 +107,7 @@ public struct PlayerScreenView: View {
                 subtitleTracks: model.subtitles.tracks,
                 selectedSubtitleTrackID: model.subtitles.selectedTrackID,
                 subtitleDelay: model.subtitles.delay,
+                videoTracks: model.videoTracks,
                 onTogglePlay: { Task { await model.togglePlayPause() } },
                 onScrubBegan: { model.beginScrub() },
                 onScrubChanged: { model.updateScrub(fraction: $0) },
@@ -115,6 +116,7 @@ public struct PlayerScreenView: View {
                 onToggleSubtitles: { Task { await model.toggleSubtitles() } },
                 onSelectSubtitle: { id in Task { await model.selectSubtitleTrack(id: id) } },
                 onAdjustSubtitleDelay: { delta in Task { await model.adjustSubtitleDelay(by: delta) } },
+                onSelectVideoTrack: { id in Task { await model.selectVideoTrack(id: id) } },
                 onOpenFile: { isPickingFile = true },
                 onOpenSubtitle: { isPickingSubtitle = true }
             )
@@ -166,6 +168,9 @@ public struct PlayerScreenView: View {
         let video = size.width > 0 ? "\(Int(size.width))×\(Int(size.height))" : "—"
         let audio = model.audio.isOutputting ? "输出 \(model.audio.outputSampleRate) Hz" : "无输出"
         var text = "\(model.state) · 画面 \(video) · 音频 \(audio) · \(model.subtitles.label)"
+        // 清晰度只在**真的有多档**时才占位：单码率下这一行是本片源分辨率，
+        // 与前面的「画面 1280×720」重复，写两遍只会让状态行变长、反而更难读。
+        if model.videoTracks.hasAlternatives { text += " · \(model.videoTracks.label)" }
         if let note = model.subtitleNote { text += " · \(note)" }
         if model.isBuffering { text += " · 缓冲中" }
         return text

@@ -7,4 +7,5 @@ public enum PlayerControllerUpdate: Sendable, Equatable {
     case videoSizeChanged(CGSize)
     case audioChanged(PlayerAudioState)
     case subtitlesChanged(PlayerSubtitleState)
+    case videoTracksChanged(PlayerVideoTrackState)
 }

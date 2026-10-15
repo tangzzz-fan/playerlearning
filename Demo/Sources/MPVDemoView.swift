@@ -72,6 +72,10 @@ final class PlayerDemoModel {
             await exerciseFinish()
         } else if let direct = directURL, let url = URL(string: direct) {
             await loadDirect(url)
+            // 清晰度的取证必须挂在**网络源**上（多档只存在于 HLS 的 master 清单里）。
+            if exerciseTracks {
+                await exerciseTrackSwitch()
+            }
         } else if ProcessInfo.processInfo.arguments.contains("-autoLoadSample") {
             await loadSample()
             await player.play()
@@ -187,6 +191,46 @@ final class PlayerDemoModel {
         Self.writeToStderr("[exercise] replayed → \(player.state) t=\(String(format: "%.2f", player.currentTime))")
     }
 
+    /// `-exerciseTracks`：真机上**枚举可选清晰度 → 切一次 → 回读**，逐拍打点。
+    ///
+    /// 为什么需要它：`P5-T5` 的三层里，有两件**无法在单元测试里证明** ——
+    /// ① 内核真的把多档报上来了（多档源要外部 `ffmpeg` + HTTP 服务，夹具不确定，`P-033`）；
+    /// ② 切完之后画面/档位真的换了。两者都只能在真机上取证。
+    ///
+    /// 用法：`-directURL <master.m3u8> -exerciseTracks`
+    private func exerciseTrackSwitch() async {
+        note = "清晰度取证：等待档位清单…"
+        // 网络源要等 demuxer 读完 master 清单才齐 ⇒ 轮询，**有上限**（不设上限的等待会挂死）。
+        var waited = 0
+        while player.videoTracks.tracks.isEmpty, waited < 50 {
+            try? await Task.sleep(for: .milliseconds(200))
+            waited += 1
+        }
+        let state = player.videoTracks
+        let menu = state.hasAlternatives ? "会出现" : "不出现（只有一档 ⇒ 菜单是噪音）"
+        Self.writeToStderr("[tracks] 可选档位 \(state.tracks.count) 条 · 清晰度菜单\(menu)")
+        for track in state.tracks {
+            let mark = track.id == state.selectedTrackID ? "  ← 当前" : ""
+            Self.writeToStderr("[tracks]   id=\(track.id)  \(track.label)\(mark)")
+        }
+
+        guard let target = state.tracks.first(where: { $0.id != state.selectedTrackID }) else {
+            Self.writeToStderr("[tracks] 没有别的档位可切，结束")
+            return
+        }
+        Self.writeToStderr("[tracks] 切到 id=\(target.id) \(target.label)")
+        await player.selectVideoTrack(id: target.id)
+        try? await Task.sleep(for: .seconds(3))
+        Self.writeToStderr("[tracks] 切档 3 秒后 → \(Self.snapshot(player))")
+        // 如实划清这条取证能证到哪 —— 免得日志被读成"音轨也验过了"。
+        Self.writeToStderr("[tracks] ⚠️ 本入口只证「档位清单 + vid 切换 + 回读」；"
+            + "「切档是否带动音轨」需人耳判断（docs/14 §四 遗留 1）")
+    }
+
+    private var exerciseTracks: Bool {
+        ProcessInfo.processInfo.arguments.contains("-exerciseTracks")
+    }
+
     func teardown() async {
         memory?.cancel()
         memory = nil
@@ -224,8 +268,15 @@ final class PlayerDemoModel {
     private static func snapshot(_ player: PlayerViewModel) -> String {
         let time = String(format: "%.2f/%.2f", player.currentTime, player.duration)
         let progress = String(format: "%.3f", player.progress)
-        return "state=\(player.state) t=\(time) progress=\(progress) buffering=\(player.isBuffering)"
+        var line = "state=\(player.state) t=\(time) progress=\(progress) buffering=\(player.isBuffering)"
             + " canPlay=\(player.canPlay) canStop=\(player.canStop)"
+        // 清晰度只在**真的有多档**时才上这一行：单码率下它与前面的「画面 W×H」是同一件事，
+        // 写两遍只会让状态行更长得更难读（与状态行的显示规则保持一致）。
+        if player.videoTracks.hasAlternatives {
+            let current = player.videoTracks.selectedTrack?.label ?? "—"
+            line += " 清晰度=\(current)（共 \(player.videoTracks.tracks.count) 档）"
+        }
+        return line
     }
 
     /// `-sampleURL <url>` 可覆盖样例来源（排查用；也给"换一个真实素材复验"留了口子）。
@@ -334,6 +385,7 @@ private actor MacOSStubKernel: PlayerKernelProtocol {
     func seek(to seconds: Double) async {}
     func addSubtitle(url: URL, title: String?) async {}
     func selectSubtitleTrack(id: Int64?) async {}
+    func selectVideoTrack(id: Int64) async {}
     func setSubtitleVisible(_ visible: Bool) async {}
     func setSubtitleDelay(_ seconds: Double) async {}
 

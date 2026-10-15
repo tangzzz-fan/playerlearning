@@ -9,6 +9,7 @@ public struct PlayerControllerSnapshot: Sendable, Equatable {
     public var naturalSize: CGSize
     public var audio: PlayerAudioState
     public var subtitles: PlayerSubtitleState
+    public var videoTracks: PlayerVideoTrackState
 
     public init(
         state: PlayerState = .idle,
@@ -17,7 +18,8 @@ public struct PlayerControllerSnapshot: Sendable, Equatable {
         isBuffering: Bool = false,
         naturalSize: CGSize = .zero,
         audio: PlayerAudioState = PlayerAudioState(),
-        subtitles: PlayerSubtitleState = PlayerSubtitleState()
+        subtitles: PlayerSubtitleState = PlayerSubtitleState(),
+        videoTracks: PlayerVideoTrackState = PlayerVideoTrackState()
     ) {
         self.state = state
         self.currentTime = currentTime
@@ -26,5 +28,6 @@ public struct PlayerControllerSnapshot: Sendable, Equatable {
         self.naturalSize = naturalSize
         self.audio = audio
         self.subtitles = subtitles
+        self.videoTracks = videoTracks
     }
 }

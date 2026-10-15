@@ -67,6 +67,7 @@ public actor MPVKernel: PlayerKernelProtocol {
     private var videoSizeTracker = VideoSizeTracker()
     private var audio = PlayerAudioState()
     private var subtitles = PlayerSubtitleState()
+    private var videoTracks = PlayerVideoTrackState()
     /// 被 mpv 拒绝的选项（名字拼错 / 版本不支持）。**空数组才是正常状态**。
     private var rejectedOptions: [String] = []
     /// 内核日志出口（见 `enableLogging`）。
@@ -110,7 +111,8 @@ public actor MPVKernel: PlayerKernelProtocol {
             isBuffering: isBuffering,
             naturalSize: naturalSize,
             audio: audio,
-            subtitles: subtitles
+            subtitles: subtitles,
+            videoTracks: videoTracks
         )
     }
 
@@ -218,6 +220,17 @@ public actor MPVKernel: PlayerKernelProtocol {
         guard let handle = owner?.pointer else { return }
         setProperty(handle, "sid", id.map(String.init) ?? "no")
         refreshSubtitleState()
+    }
+
+    /// 选中一条视频轨（`vid`）—— 「可切清晰度」的抓手。
+    ///
+    /// 与 `sid` 对称，但**没有"关掉"这个分支**：`vid=no` 等于没有画面，
+    /// 那不是播放器可以停留的状态（协议里参数也据此写成非可选）。
+    /// 发完命令**立刻回读**，理由同 `addSubtitle`（`P-038`：问"现在是什么"比等通知可靠）。
+    public func selectVideoTrack(id: Int64) async {
+        guard let handle = owner?.pointer else { return }
+        setProperty(handle, "vid", String(id))
+        refreshVideoTrackState()
     }
 
     /// `sub-visibility` —— 只发命令，状态由回读/观察得到（同 `P2-T5` 对 `pause` 的做法）。
@@ -400,6 +413,9 @@ public actor MPVKernel: PlayerKernelProtocol {
         _ = mpv_observe_property(handle, 0, "sid", MPV_FORMAT_INT64)
         _ = mpv_observe_property(handle, 0, "sub-visibility", MPV_FORMAT_FLAG)
         _ = mpv_observe_property(handle, 0, "sub-delay", MPV_FORMAT_DOUBLE)
+        // 视频轨：`vid` 是当前的档位。轨道清单的变化由上面那条 `track-list/count` 一并覆盖
+        // （一个属性驱动两条回读路径，见 `applyProperty`）。
+        _ = mpv_observe_property(handle, 0, "vid", MPV_FORMAT_INT64)
     }
 
     private nonisolated func installWakeupCallback(_ handle: OpaquePointer, sink: WakeupSink) {
@@ -430,7 +446,10 @@ public actor MPVKernel: PlayerKernelProtocol {
             emitPauseState()
             // 换文件会重建轨道清单（内挂字幕就在这一步出现）⇒ 必须回读，
             // 否则界面上的字幕菜单永远停在上一个文件的轨道上。
+            // **视频轨同理**：HLS 多码率的档位清单也是在这一步才齐的，
+            // 不回读的话「清晰度」菜单会一直空着（而且没有任何报错）。
             refreshSubtitleState()
+            refreshVideoTrackState()
         case MPV_EVENT_END_FILE:
             guard let data = event.data else { return }
             emitEndFile(UnsafePointer<mpv_event_end_file>(OpaquePointer(data)).pointee)
@@ -527,10 +546,17 @@ public actor MPVKernel: PlayerKernelProtocol {
             // 这里不再多报一个状态，避免"退回去继续播"变成两次状态翻转。
             guard UnsafePointer<Int32>(OpaquePointer(data)).pointee != 0 else { return }
             emit(.stateChanged(.finished))
-        case "track-list/count", "sid", "sub-visibility", "sub-delay":
-            // 四条都走同一个"回读整份字幕状态"的路径：它们互相影响
+        case "track-list/count":
+            // `track-list` 一变，**字幕轨与视频轨都要重读**：一个属性、两条回读路径。
+            // （逐条拼状态容易拼出不一致的中间态 —— 见 `refreshSubtitleState` 的说明。）
+            refreshSubtitleState()
+            refreshVideoTrackState()
+        case "sid", "sub-visibility", "sub-delay":
+            // 三条都走同一个"回读整份字幕状态"的路径：它们互相影响
             // （比如 `sid` 变了，`track-list/N/selected` 也变了），逐条拼状态容易拼出不一致的中间态。
             refreshSubtitleState()
+        case "vid":
+            refreshVideoTrackState()
         case "width":
             let width = Int(UnsafePointer<Int64>(OpaquePointer(data)).pointee)
             if let size = videoSizeTracker.setWidth(width) {
@@ -569,6 +595,8 @@ public actor MPVKernel: PlayerKernelProtocol {
             audio = state
         case .subtitlesChanged(let state):
             subtitles = state
+        case .videoTracksChanged(let state):
+            videoTracks = state
         }
     }
 
@@ -593,24 +621,28 @@ public actor MPVKernel: PlayerKernelProtocol {
     }
 
     private func readSubtitleTracks(_ handle: OpaquePointer) -> [SubtitleTrack] {
-        guard let count = getInt64(handle, "track-list/count"), count > 0 else { return [] }
-        var tracks: [SubtitleTrack] = []
-        for index in 0..<Int(count) {
+        trackIndices(handle, ofType: "sub").map { index in
             let prefix = "track-list/\(index)"
-            guard let type = getString(handle, "\(prefix)/type"), type == "sub" else { continue }
             let codec = getString(handle, "\(prefix)/codec")
-            tracks.append(
-                SubtitleTrack(
-                    id: getInt64(handle, "\(prefix)/id") ?? -1,
-                    title: getString(handle, "\(prefix)/title"),
-                    language: getString(handle, "\(prefix)/lang"),
-                    isExternal: getFlag(handle, "\(prefix)/external") ?? false,
-                    // 容器里的内挂字幕常常只报一个通用 `sub`，那不是编解码信息 ⇒ 置空。
-                    codec: codec == "sub" ? nil : codec
-                )
+            return SubtitleTrack(
+                id: getInt64(handle, "\(prefix)/id") ?? -1,
+                title: getString(handle, "\(prefix)/title"),
+                language: getString(handle, "\(prefix)/lang"),
+                isExternal: getFlag(handle, "\(prefix)/external") ?? false,
+                // 容器里的内挂字幕常常只报一个通用 `sub`，那不是编解码信息 ⇒ 置空。
+                codec: codec == "sub" ? nil : codec
             )
         }
-        return tracks
+    }
+
+    /// `track-list` 里 `type == <type>` 的那些下标。
+    ///
+    /// 字幕轨与视频轨**共用这一条过滤**（`docs/14` §一 的结论：「把 `type == "sub"` 的过滤条件泛化」）。
+    /// 之所以能共用：HLS 的多码率档位在 mpv 里**就是若干条普通 `type=video` 的轨道** ——
+    /// 它们与字幕轨走的是同一张 `track-list`，只是类型不同。
+    private func trackIndices(_ handle: OpaquePointer, ofType type: String) -> [Int] {
+        guard let count = getInt64(handle, "track-list/count"), count > 0 else { return [] }
+        return (0..<Int(count)).filter { getString(handle, "track-list/\($0)/type") == type }
     }
 
     /// mpv 用**负值**表示"没有选中"（`sid=no`）—— 这里把它归一成 `nil`，
@@ -618,6 +650,49 @@ public actor MPVKernel: PlayerKernelProtocol {
     private func readSelectedSubtitleTrackID(_ handle: OpaquePointer) -> Int64? {
         guard let sid = getInt64(handle, "sid"), sid >= 0 else { return nil }
         return sid
+    }
+
+    // MARK: - 视频轨状态回读（「可切清晰度」）
+
+    /// 从内核**回读整份视频轨状态**，有变化才上报。与 `refreshSubtitleState` 同一条纪律：
+    /// 一次读全、一次比较、一次上报（逐条更新会拼出"界面看得到但内核不认"的中间态）。
+    private func refreshVideoTrackState() {
+        guard let handle = owner?.pointer else { return }
+        let next = PlayerVideoTrackState(
+            tracks: readVideoTracks(handle),
+            selectedTrackID: readSelectedVideoTrackID(handle)
+        )
+        guard next != videoTracks else { return }
+        videoTracks = next
+        emit(.videoTracksChanged(next))
+    }
+
+    /// 枚举视频轨。
+    ///
+    /// ⚠️ 档位标签取 **`demux-w` / `demux-h`**，不取 `video-params/*`：
+    /// 后者只描述**当前正在解的那一条**，拿它当"每条轨的分辨率"读出来全会是同一个值。
+    ///
+    /// ⚠️ 也不押 `hls-bitrate`：实测在 HLS 源上**读不到**（`-99`，见 `docs/14` §1.2）。
+    /// 这里读 `demux-bitrate` 且**读不到 / 非正数就留 `nil`** —— 界面上"有就显示"，
+    /// 分辨率才是那个稳定可得的档位区分。
+    private func readVideoTracks(_ handle: OpaquePointer) -> [VideoTrack] {
+        trackIndices(handle, ofType: "video").map { index in
+            let prefix = "track-list/\(index)"
+            let bitrate = getInt64(handle, "\(prefix)/demux-bitrate")
+            return VideoTrack(
+                id: getInt64(handle, "\(prefix)/id") ?? -1,
+                width: Int(getInt64(handle, "\(prefix)/demux-w") ?? 0),
+                height: Int(getInt64(handle, "\(prefix)/demux-h") ?? 0),
+                codec: getString(handle, "\(prefix)/codec"),
+                bitrate: bitrate.flatMap { $0 > 0 ? Int($0) : nil }
+            )
+        }
+    }
+
+    /// 与字幕轨同样的"归一成 `nil`"：mpv 的 `vid` 在没有视频时是**负值**（`-1`）。
+    private func readSelectedVideoTrackID(_ handle: OpaquePointer) -> Int64? {
+        guard let vid = getInt64(handle, "vid"), vid >= 0 else { return nil }
+        return vid
     }
 
     private func getString(_ handle: OpaquePointer, _ name: String) -> String? {

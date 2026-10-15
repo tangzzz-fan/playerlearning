@@ -11,6 +11,8 @@ public struct PlayerKernelSnapshot: Sendable, Equatable {
     public var audio: PlayerAudioState
     /// 字幕状态（轨道清单 / 选中项 / 开关 / 延迟）。
     public var subtitles: PlayerSubtitleState
+    /// 视频轨状态（档位清单 / 当前档位）。
+    public var videoTracks: PlayerVideoTrackState
 
     public init(
         state: PlayerState = .idle,
@@ -19,7 +21,8 @@ public struct PlayerKernelSnapshot: Sendable, Equatable {
         isBuffering: Bool = false,
         naturalSize: CGSize = .zero,
         audio: PlayerAudioState = PlayerAudioState(),
-        subtitles: PlayerSubtitleState = PlayerSubtitleState()
+        subtitles: PlayerSubtitleState = PlayerSubtitleState(),
+        videoTracks: PlayerVideoTrackState = PlayerVideoTrackState()
     ) {
         self.state = state
         self.currentTime = currentTime
@@ -28,5 +31,6 @@ public struct PlayerKernelSnapshot: Sendable, Equatable {
         self.naturalSize = naturalSize
         self.audio = audio
         self.subtitles = subtitles
+        self.videoTracks = videoTracks
     }
 }

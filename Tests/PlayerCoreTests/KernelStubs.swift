@@ -22,6 +22,8 @@ actor KernelStub<Tag>: PlayerKernelProtocol {
 
     func selectSubtitleTrack(id: Int64?) async {}
 
+    func selectVideoTrack(id: Int64) async {}
+
     func setSubtitleVisible(_ visible: Bool) async {}
 
     func setSubtitleDelay(_ seconds: Double) async {}

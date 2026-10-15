@@ -593,6 +593,70 @@ struct MPVKernelTests {
         await harness.shutdown()
     }
 
+    // MARK: - 视频轨（`P5-T5`「可切清晰度」）
+
+    /// **单码率源的视频轨必须被枚举出来**，分辨率与选中项都要对。
+    ///
+    /// ⚠️ 这里刻意**不测多档切换**：HLS 多码率源要外部 `ffmpeg` + HTTP 服务，
+    /// 夹具就不确定了（`P-033`）。多档行为已在 `docs/14` 用**本地三档源**实测过 ——
+    /// 那是**一次性探针**，不是常驻测试。
+    /// 本用例盯的是**常驻的翻译层**：`track-list` → `VideoTrack` 的字段映射（`demux-w/h`）与 `vid` 回读。
+    @Test
+    func testVideoTrackIsEnumeratedWithResolution() async throws {
+        let url = try await TestClip.makeURL()
+        defer { TestClip.remove(url) }
+        let harness = await KernelHarness()
+
+        try await harness.kernel.load(PlayerResource(url: url))
+
+        try await waitUntil("视频轨出现在状态里") {
+            await harness.kernel.snapshot().videoTracks.tracks.isEmpty == false
+        }
+
+        let state = await harness.kernel.snapshot().videoTracks
+        #expect(state.tracks.count == 1, "本地 mp4 只有一条视频轨；实际：\(state.tracks)")
+        let track = try #require(state.tracks.first)
+        #expect(track.width == TestClip.width, "档位标签取 `track-list/N/demux-w`；实测 \(track.width)")
+        #expect(track.height == TestClip.height, "档位标签取 `track-list/N/demux-h`；实测 \(track.height)")
+        #expect(track.label.hasPrefix("\(TestClip.width)×\(TestClip.height)"))
+        #expect(state.selectedTrackID == track.id, "正在解的那一条就是选中项")
+        #expect(state.selectedTrack != nil)
+        #expect(!state.hasAlternatives, "单码率不该显示「清晰度」菜单（只有一项的菜单是噪音）")
+
+        // 事件也该到过一次（界面靠它刷新菜单）
+        try await harness.waitFor("上报过视频轨状态") { event in
+            if case .videoTracksChanged(let value) = event { return !value.tracks.isEmpty }
+            return false
+        }
+        await harness.shutdown()
+    }
+
+    /// **选中视频轨要能落下去、并且回读得到** —— 证 `vid` 的写-读路径真的通，
+    /// 而不是被静默忽略（`P-049` 那族：设了不等于生效）。
+    ///
+    /// 单档素材下"切到自己"是唯一**确定性**的选择，但它完整走了 `setProperty` + 回读那条路。
+    @Test
+    func testSelectingVideoTrackIsAppliedAndReadBack() async throws {
+        let (harness, clip) = try await harnessPlaying()
+        defer { TestClip.remove(clip) }
+
+        try await waitUntil("视频轨就位") {
+            await harness.kernel.snapshot().videoTracks.tracks.isEmpty == false
+        }
+        let target = try #require(await harness.kernel.snapshot().videoTracks.tracks.first)
+
+        await harness.kernel.selectVideoTrack(id: target.id)
+
+        try await waitUntil("`vid` 回读为同一条") {
+            await harness.kernel.snapshot().videoTracks.selectedTrackID == target.id
+        }
+        let state = await harness.kernel.snapshot().videoTracks
+        #expect(state.selectedTrackID == target.id)
+        #expect(state.selectedTrack != nil)
+        #expect(state.label == "清晰度：\(target.label)")
+        await harness.shutdown()
+    }
+
     // MARK: - 播放控制（`stop` / `play` 的真实语义）
 
     /// **「停止」之后再点「播放」必须能重新播起来。**

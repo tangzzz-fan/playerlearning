@@ -227,4 +227,52 @@ struct FakeKernelTests {
         let event = await iterator.next()
         #expect(event == nil)
     }
+
+    /// 切清晰度必须**真的动状态并上报**。
+    ///
+    /// 假内核的价值就在于"照真内核的语义走"（`addSubtitle` 那条注释同理）：
+    /// 只记一笔然后什么都不发生，会让装配层与界面的测试**永远测不到状态变化** ——
+    /// 于是"切了没反应"这个缺陷在测试里是隐形的。
+    @Test
+    func testSelectVideoTrackMovesSelectionAndEmitsChange() async throws {
+        let kernel = FakeKernel()
+        var iterator = (await kernel.events()).makeAsyncIterator()
+        let tracks = [
+            VideoTrack(id: 1, width: 1280, height: 720),
+            VideoTrack(id: 2, width: 854, height: 480),
+        ]
+
+        // 档位清单在真内核里来自 `track-list`；这里直接灌进去。
+        await kernel.emit(.videoTracksChanged(PlayerVideoTrackState(tracks: tracks, selectedTrackID: 1)))
+        _ = await iterator.next()
+
+        await kernel.selectVideoTrack(id: 2)
+
+        let ids = await kernel.selectedVideoTrackIDs
+        #expect(ids == [2])
+        let emitted = await iterator.next()
+        #expect(emitted == .videoTracksChanged(PlayerVideoTrackState(tracks: tracks, selectedTrackID: 2)))
+        let snapshot = await kernel.snapshot()
+        #expect(snapshot.videoTracks.selectedTrackID == 2)
+        #expect(snapshot.videoTracks.label == "清晰度：854×480")
+    }
+
+    /// 选中"已经选中的那一档"不该再上报 —— 否则菜单点一下就是一个无意义的全界面重绘。
+    @Test
+    func testSelectingTheAlreadySelectedVideoTrackEmitsNothing() async throws {
+        let kernel = FakeKernel()
+        var iterator = (await kernel.events()).makeAsyncIterator()
+        let state = PlayerVideoTrackState(tracks: [VideoTrack(id: 1, width: 1280, height: 720)], selectedTrackID: 1)
+
+        await kernel.emit(.videoTracksChanged(state))
+        _ = await iterator.next()
+
+        await kernel.selectVideoTrack(id: 1)
+        await kernel.finishEvents()
+
+        let emitted = await iterator.next()
+        #expect(emitted == nil, "同值不该再上报")
+        let ids = await kernel.selectedVideoTrackIDs
+        #expect(ids == [1], "但请求本身要如实记下来（那是「内核收到了什么」的证据）")
+    }
 }

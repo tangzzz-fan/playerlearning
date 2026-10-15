@@ -42,6 +42,8 @@ public final class PlayerViewModel {
     public private(set) var chrome = PlayerChromeModel()
     /// 字幕状态（轨道清单 / 选中项 / 开关 / 延迟）。**来自内核**，不是界面自己记的。
     public private(set) var subtitles = PlayerSubtitleState()
+    /// 视频轨状态（档位清单 / 当前档位）= 界面上的「清晰度」。**同样来自内核**。
+    public private(set) var videoTracks = PlayerVideoTrackState()
     /// 字幕加载结果的一行字（编码 / 格式 / 丢了几块）。
     public private(set) var subtitleNote: String?
 
@@ -169,6 +171,11 @@ public final class PlayerViewModel {
         await controller.selectSubtitleTrack(id: id)
     }
 
+    /// 切清晰度。**只发命令**，当前档位等内核回读（同字幕轨选择的原则）。
+    public func selectVideoTrack(id: Int64) async {
+        await controller.selectVideoTrack(id: id)
+    }
+
     public func adjustSubtitleDelay(by delta: Double) async {
         await controller.adjustSubtitleDelay(by: delta)
     }
@@ -278,6 +285,8 @@ public final class PlayerViewModel {
             audio = newState
         case .subtitlesChanged(let newState):
             subtitles = newState
+        case .videoTracksChanged(let newState):
+            videoTracks = newState
         }
     }
 

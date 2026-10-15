@@ -11,6 +11,7 @@ public actor FakeKernel: PlayerKernelProtocol {
     public private(set) var selectedSubtitleTrackIDs: [Int64?] = []
     public private(set) var subtitleVisibilityRequests: [Bool] = []
     public private(set) var subtitleDelayRequests: [Double] = []
+    public private(set) var selectedVideoTrackIDs: [Int64] = []
 
     private let scriptedDuration: Double
     private let scriptedNaturalSize: CGSize
@@ -22,6 +23,7 @@ public actor FakeKernel: PlayerKernelProtocol {
     private var naturalSize: CGSize = .zero
     private var audio = PlayerAudioState()
     private var subtitles = PlayerSubtitleState()
+    private var videoTracks = PlayerVideoTrackState()
     private var continuation: AsyncStream<PlayerKernelEvent>.Continuation?
 
     public init() {
@@ -102,8 +104,18 @@ public actor FakeKernel: PlayerKernelProtocol {
         emit(.subtitlesChanged(subtitles))
     }
 
-    public func events() async -> AsyncStream<PlayerKernelEvent> {
-        let (stream, continuation) = AsyncStream<PlayerKernelEvent>.makeStream()
+    /// 切清晰度。**照真内核的语义走**：记下请求、改选中项、如实上报 ——
+    /// 而不是"记一笔然后什么都不发生"（那会让装配层/界面的测试永远测不到状态变化）。
+    ///
+    /// 档位清单由测试用 `emit(.videoTracksChanged(…))` 灌进来（真内核里它来自 `track-list`）。
+    public func selectVideoTrack(id: Int64) async {
+        selectedVideoTrackIDs.append(id)
+        guard videoTracks.selectedTrackID != id else { return }
+        videoTracks.selectedTrackID = id
+        emit(.videoTracksChanged(videoTracks))
+    }
+
+    public func events() async -> AsyncStream<PlayerKernelEvent> {        let (stream, continuation) = AsyncStream<PlayerKernelEvent>.makeStream()
         self.continuation = continuation
         return stream
     }
@@ -121,7 +133,8 @@ public actor FakeKernel: PlayerKernelProtocol {
             isBuffering: isBuffering,
             naturalSize: naturalSize,
             audio: audio,
-            subtitles: subtitles
+            subtitles: subtitles,
+            videoTracks: videoTracks
         )
     }
 
@@ -146,6 +159,8 @@ public actor FakeKernel: PlayerKernelProtocol {
             audio = state
         case .subtitlesChanged(let state):
             subtitles = state
+        case .videoTracksChanged(let state):
+            videoTracks = state
         }
     }
 }
