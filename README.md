@@ -130,16 +130,38 @@ xcrun devicectl device process launch --device <真机 UDID> --console \
 #   `--stall-at/--stall-for` 可造"挂住 N 秒再继续"（更长断网的恢复能力，尚未测）。
 
 # ⑥d **可切清晰度**取证（`P5-T5`：HLS 多码率 = N 条 video track，切档 = 设 `vid`）
-#   多码率源要现造（ffmpeg 一次性环境，不入仓库）—— 造法见 docs/14 §1.1，成品在 /tmp/hls-ladder。
-#   ⚠️ 真机同样不能走 127.0.0.1 ⇒ 服务器绑 0.0.0.0，URL 用宿主局域网地址。
+#   多码率源要现造（ffmpeg 一次性环境，不入仓库）。
+#   ⚠️ 三档音频**刻意用不同采样率**（48000/44100/32000）：这样"切 vid 会不会带动音轨"
+#      才是**可判**的（原来的源三档同为 48k ⇒ 切不切都报 48000，那个源本身答不出来）。
+/opt/homebrew/bin/ffmpeg -y -i /tmp/vidprobe2/sintel_trailer-720p.mp4 \
+  -filter_complex "[0:v]split=3[v1][v2][v3];\
+    [v1]scale=w=1280:h=720[v1out];[v2]scale=w=854:h=480[v2out];[v3]scale=w=426:h=240[v3out];\
+    [0:a]asplit=3[a1][a2][a3];[a1]aresample=48000[a1out];\
+    [a2]aresample=44100[a2out];[a3]aresample=32000[a3out]" \
+  -map "[v1out]" -map "[v2out]" -map "[v3out]" -map "[a1out]" -map "[a2out]" -map "[a3out]" \
+  -c:v:0 libx264 -preset veryfast -b:v:0 2500k -c:v:1 libx264 -preset veryfast -b:v:1 1200k \
+  -c:v:2 libx264 -preset veryfast -b:v:2 400k -c:a aac -b:a 128k \
+  -f hls -hls_time 4 -hls_playlist_type vod \
+  -hls_segment_filename "/tmp/hls-ladder/v%v/seg%03d.ts" -master_pl_name master.m3u8 \
+  -var_stream_map "v:0,a:0 v:1,a:1 v:2,a:2" "/tmp/hls-ladder/v%v/index.m3u8"
+#   （⚠️ 档位号是 `%v`，分片号是 `%d`；写错只报 "More than 1 variant streams are present"）
+
+#   ⚠️ 真机不能走 127.0.0.1 ⇒ 服务器绑 0.0.0.0，URL 用宿主局域网地址。
+MACIP=$(ipconfig getifaddr en0 || ipconfig getifaddr en1)
 python3 Tools/serve-range.py --port 8765 --root /tmp/hls-ladder --host 0.0.0.0
 xcrun devicectl device process launch --device <真机 UDID> --console \
   --terminate-existing com.playerstack.demo -- \
   -directURL http://$MACIP:8765/master.m3u8 -exerciseTracks
-#   ⇒ [tracks] 可选档位 N 条 · 清晰度菜单会出现
+#   ⇒ **[2026-10-16 真机实测过的输出]**（iPhone 16 Pro）
+#     [tracks] 可选档位 3 条 · 清晰度菜单会出现
 #     [tracks]   id=1  1280×720  ← 当前        ← 档位标签取 `demux-w/h`（不是 hls-bitrate，实测读不到）
-#     [tracks] 切到 id=3 426×240 → 3 秒后 [status] … 清晰度=426×240（共 3 档）
+#     [tracks]   id=2  854×480 · id=3  426×240
+#     [tracks] 切档前音频：解码 48000 Hz / 输出 48000 Hz
+#     [tracks] 切到 id=2 854×480
+#     [tracks] 切档后音频：解码 48000 Hz / 输出 48000 Hz   ← **没跟着切**（见 docs/14 §8）
+#     [tracks] 切档 3 秒后 → state=playing t=2.84/52.21 … 清晰度=854×480（共 3 档）
 #   判据：① 菜单**只在多档时出现**（单码率下它是噪音）② 切档后回读的档位**必须是切走的那一档**
+#         ③ 切档后 `t` 继续推进、`buffering` 不持续为真
 #   单档源（普通 mp4）用同一条命令 ⇒ 应打出「不出现（只有一档 ⇒ 菜单是噪音）」。
 
 # ⑦ 真机（⚠️ 两套 Xcode 环境、两个 team ⇒ 构建时**命令行覆盖**，不改仓库）
