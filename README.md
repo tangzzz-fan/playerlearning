@@ -2,7 +2,7 @@
 
 做一个**自己的 iOS 优先 / macOS 跟进播放器**：libmpv 单内核，本地文件 + 网络点播 + 直播全都要，能播系统播放器播不了的格式（mkv / ASS 特效字幕 / 各种编码）。
 
-**当前状态**：**Phase 0 ~ Phase 5 均已完成**（`G0`/`M0` · `G1`/`M1` · `G2`/`M2` · `G3` · `G4` · `P5-T1`~`T4`）；**`G5` 未判定**（缺可控弱网环境）。真机已跑通 —— 两套环境各一台：家里 iPhone 16 Pro（`UKXWZ3FS84`）· 本机 Tang的iPhone（`3GMJYX32U9`），口径见 §⑦。
+**当前状态**：**Phase 0–5 均已完成** · **Phase 7（macOS）`P7-T1` 完成**（`G7` 达成：根包 214 tests macOS 全绿 + Demo macOS target 构建成功）；**`G5` 未判定**（缺可控弱网环境）。真机已跑通 —— 两套环境各一台：家里 iPhone 16 Pro（`UKXWZ3FS84`）· 本机 Tang的iPhone（`3GMJYX32U9`），口径见 §⑦。
 
 | 里程碑 | 状态 |
 | --- | --- |

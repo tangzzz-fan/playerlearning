@@ -2,7 +2,9 @@ import CoreGraphics
 import Foundation
 import Observation
 import PlayerCore
+#if os(iOS)
 import PlayerMPV
+#endif
 import PlayerUI
 import SwiftUI
 
@@ -10,6 +12,8 @@ import SwiftUI
 ///
 /// ⚠️ 顺序不可交换：`表面` 先给出 `wid` 句柄 → 才能构造内核（`wid` 必须在 `mpv_initialize` 之前）
 /// → 才能构造控制器与视图模型。`PlayerUI` 刻意不认识 libmpv，就是为了让这段装配留在这里。
+///
+/// macOS 构建使用 stub kernel（Phase 7 只验证编译通过，运行时功能由 iOS 真机验证）。
 @MainActor
 @Observable
 final class PlayerDemoModel {
@@ -25,12 +29,17 @@ final class PlayerDemoModel {
         let surface = WindowEmbedOutput()
         self.surface = surface
 
+        #if os(iOS)
         guard let handle = surface.windowEmbedHandle else {
             // 表面一定给得出句柄（它就是自身指针）。走到这里说明实现坏了，
             // ⇒ **大声死**，而不是静默退回无画面（那正是 `P2-T7` 要消灭的失败形态）。
             fatalError("WindowEmbedOutput 未给出 wid 句柄")
         }
         player = PlayerViewModel(controller: PlayerController(kernel: MPVKernel(windowEmbedHandle: handle)))
+        #else
+        // macOS：使用 stub kernel（Phase 7 只验证编译，运行时功能由 iOS 验证）
+        player = PlayerViewModel(controller: PlayerController(kernel: MacOSStubKernel()))
+        #endif
 
         if traces {
             player.onUpdate = { [origin] update in
@@ -308,3 +317,26 @@ struct MPVDemoView: View {
         .onDisappear { Task { await demo.teardown() } }
     }
 }
+
+#if os(macOS)
+/// macOS stub kernel：Phase 7 只验证**编译通过**，运行时功能由 iOS 真机验证。
+private actor MacOSStubKernel: PlayerKernelProtocol {
+    func load(_ resource: PlayerResource) async throws {}
+    func play() async {}
+    func pause() async {}
+    func stop() async {}
+    func seek(to seconds: Double) async {}
+    func addSubtitle(url: URL, title: String?) async {}
+    func selectSubtitleTrack(id: Int64?) async {}
+    func setSubtitleVisible(_ visible: Bool) async {}
+    func setSubtitleDelay(_ seconds: Double) async {}
+
+    func events() async -> AsyncStream<PlayerKernelEvent> {
+        AsyncStream { _ in }
+    }
+
+    func snapshot() async -> PlayerKernelSnapshot {
+        PlayerKernelSnapshot()
+    }
+}
+#endif

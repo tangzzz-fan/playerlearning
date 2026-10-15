@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: com.playerstack
   deploymentTarget:
     iOS: "17.0"
+    macOS: "14.0"
   createIntermediateGroups: true
 packages:
   PlayerStack:
@@ -41,12 +42,44 @@ targets:
         DEVELOPMENT_TEAM: UKXWZ3FS84
         CODE_SIGN_STYLE: Automatic
         ENABLE_USER_SCRIPT_SANDBOXING: NO
+  PlayerStackDemo-macOS:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+    dependencies:
+      - package: PlayerStack
+        product: PlayerCore
+      - package: PlayerStack
+        product: PlayerUI
+      - package: PlayerMPV
+        product: PlayerMPV
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: PlayerStack
+        LSMinimumSystemVersion: "14.0"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.playerstack.demo
+        SWIFT_VERSION: "6.0"
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_ENTITLEMENTS: ""
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
 schemes:
   # xcodegen 默认**不生成** scheme，必须显式声明，否则 xcodebuild -scheme / CI 都用不了。
   PlayerStackDemo:
     build:
       targets:
         PlayerStackDemo: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  PlayerStackDemo-macOS:
+    build:
+      targets:
+        PlayerStackDemo-macOS: all
     run:
       config: Debug
     archive:
