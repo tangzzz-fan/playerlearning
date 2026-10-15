@@ -646,6 +646,14 @@ fail '测试未全绿（日志 /tmp/gate-test.log）'
 
 **来源**：`Marquee` V140 + V141（含其自身的订正）· 本项目本次两次实测复现。
 
+**补（`P5-T5` 交付当天，又踩同一脚 —— 值得把"复现"留在正文里）**：
+`grep -n "VideoTrack\|testSelectingVideoTrack" <xcodebuild 日志>` 返回空 ⇒ 我据此写下
+**"新增的两条用例根本没跑"**，而日志里它们**两条都 ✔ passed**。
+两次（同一批日志、不同时刻）犯的是同一个错：**知道有这条坑，仍然用了 `\|`**。
+⇒ 这条坑的真正难点不在"知不知道"，而在**"搜日志时的手感"** ——
+排查现场最容易顺手敲出 `\|`。**判据：脚本/核查里的多模式搜索一律 `grep -E "a|b"`，或者直接用工具版 Grep。**
+（代价具体：一次错误的"用例没跑"结论，会让人去怀疑测试发现机制 —— 方向全错。）
+
 **防再犯**：**"返回空"与"表达式错"必须能区分开。** 一条会静默失配的正则，比一条报错的正则危险得多。
 
 ---
@@ -1615,6 +1623,36 @@ BrokenPipeError: [Errno 32] Broken pipe
 ⇒ **"客户端不再读了"这个事实，两端都能看见**。
 
 ---
+
+## P-064 · `#expect` 的说明参数**只能是一个字符串字面量** —— 拼接会让它变成 `String`
+
+**现象**：写一条信息量很足的断言时把说明拆成两段拼接，编译直接失败：
+```swift
+#expect(
+    snapshot.videoTracks.selectedTrackID == nil,
+    "内核还没回读之前就显示「已切到某档」，等于界面在替内核说话；"
+        + "实测 selectedTrackID=\(String(describing: snapshot.videoTracks.selectedTrackID))"
+)
+// error: cannot convert value of type 'String' to expected argument type 'Comment?'
+```
+
+**根因**：`#expect(_:_:)` 的第二个形参是 `Comment?`（一个 `ExpressibleByStringInterpolation` 的**专用类型**），
+而 `"a" + "b"` 求值出来的是**普通 `String`** —— 两者之间**没有隐式转换**。
+字面量（含插值）能直接构造 `Comment`，**运算结果不能**。
+
+**处置**：整段写成**一个字面量**，需要换行就用长字面量 + 插值，**不要在参数位置做字符串运算**：
+```swift
+#expect(
+    snapshot.videoTracks.selectedTrackID == nil,
+    "内核还没回读之前就显示「已切到某档」；实测 selectedTrackID=\(String(describing: snapshot.videoTracks.selectedTrackID))"
+)
+```
+
+**防再犯**：这不是运行时问题，**编译期必现** —— 写完一条长说明的断言就立刻编一次，
+别攒到最后一次性编（攒着会把"写法错"和"逻辑错"混在同一批报错里）。
+
+---
+
 
 > ### 与既有条目同源、故不重复展开的（仅登记映射，便于日后合并检索）
 >

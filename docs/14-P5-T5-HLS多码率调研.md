@@ -259,3 +259,20 @@ ffmpeg -re -stream_loop -1 -i <源> -c copy -f rtsp -rtsp_transport tcp rtsp://1
 
 本轮的三个环境坑（代理劫持回环 · mediamtx 空配置 · `nohup` 守护进程不活）已记入
 [`PITFALLS.md`](PITFALLS.md) 的 `P-059` / `P-060` / `P-061`。
+
+---
+
+## 七、后记：`P5-T5` 已按本报告的结论落地（2026-10-15）
+
+本报告回答的是**"该做成什么样"**；**实现与验证记录在 [`docs/03`](03-路线图.md) 的 `P5-T5` 📌 里**，此处只留索引：
+
+- **`PlayerCore`**：`VideoTrack` + `PlayerVideoTrackState`（只读、清单 + 选中项 + `hasAlternatives`）
+- **跨层**：事件 / 快照 / 更新 / 协议 **四处贯穿**（协议新增 `selectVideoTrack(id: Int64)`）
+- **`MPV` 内核**：`track-list` 的 `type` 过滤**泛化**（字幕轨与视频轨共用一条），新增 `vid` 写 + 回读
+- **`PlayerUI`**：清晰度菜单，**`hasAlternatives` 为假时整条隐藏**（§三 那个取舍的落地）
+- **`Demo`**：`-exerciseTracks` 取证入口（用法见 README ⑥d）
+
+**§四 的两个遗留问题，交付后仍然成立**：
+① **切 `vid` 会不会带动音轨** —— **仍未验**。`-exerciseTracks` 的日志末尾会显式打印这条边界，
+   免得取证记录被读成"音轨也验过了"。
+② **直播下的轨道清单** —— **仍未测**（本报告的多档实测是 VOD）。

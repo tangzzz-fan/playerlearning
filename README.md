@@ -111,6 +111,19 @@ xcrun devicectl device process launch --device <真机 UDID> --console \
 #   参考值：720p 实时需 ≈146 KB/s；限到 45 000 B/s ⇒ 供给只有需求 1/3，缓存必然反复耗尽。
 #   `--stall-at/--stall-for` 可造"挂住 N 秒再继续"（更长断网的恢复能力，尚未测）。
 
+# ⑥d **可切清晰度**取证（`P5-T5`：HLS 多码率 = N 条 video track，切档 = 设 `vid`）
+#   多码率源要现造（ffmpeg 一次性环境，不入仓库）—— 造法见 docs/14 §1.1，成品在 /tmp/hls-ladder。
+#   ⚠️ 真机同样不能走 127.0.0.1 ⇒ 服务器绑 0.0.0.0，URL 用宿主局域网地址。
+python3 Tools/serve-range.py --port 8765 --root /tmp/hls-ladder --host 0.0.0.0
+xcrun devicectl device process launch --device <真机 UDID> --console \
+  --terminate-existing com.playerstack.demo -- \
+  -directURL http://$MACIP:8765/master.m3u8 -exerciseTracks
+#   ⇒ [tracks] 可选档位 N 条 · 清晰度菜单会出现
+#     [tracks]   id=1  1280×720  ← 当前        ← 档位标签取 `demux-w/h`（不是 hls-bitrate，实测读不到）
+#     [tracks] 切到 id=3 426×240 → 3 秒后 [status] … 清晰度=426×240（共 3 档）
+#   判据：① 菜单**只在多档时出现**（单码率下它是噪音）② 切档后回读的档位**必须是切走的那一档**
+#   单档源（普通 mp4）用同一条命令 ⇒ 应打出「不出现（只有一档 ⇒ 菜单是噪音）」。
+
 # ⑦ 真机（⚠️ 两套 Xcode 环境、两个 team ⇒ 构建时**命令行覆盖**，不改仓库）
 #   环境 A · 家里：team UKXWZ3FS84 · 真机 Tango / iPhone 16 Pro
 #   环境 B · 本机：team 3GMJYX32U9 · 真机 Tang的iPhone      ← `project.yml` 里写的是 A 的值
