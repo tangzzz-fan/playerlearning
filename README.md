@@ -164,6 +164,25 @@ xcrun devicectl device process launch --device <真机 UDID> --console \
 #         ③ 切档后 `t` 继续推进、`buffering` 不持续为真
 #   单档源（普通 mp4）用同一条命令 ⇒ 应打出「不出现（只有一档 ⇒ 菜单是噪音）」。
 
+# ⑥e **直播延迟测量**（`P6-T2`：口径 + 方法 + 基线，报告见 docs/15）
+#   两个指标：A 起播延迟（load → 首个 playing）· B 直播落后量（推流端已推媒体时间 − 播放端 time-pos）
+#   1) 源
+mediamtx /tmp/mediamtx.yml
+#   2) 推流（-re 实时 · **单次不 loop**，loop 会让媒体时间回绕、指标失效）
+/opt/homebrew/bin/ffmpeg -re -i /tmp/vidprobe2/sintel_trailer-720p.mp4 -c copy \
+  -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/live -progress pipe:1 -nostats
+#   ⇒ 周期性打印 `out_time=HH:MM:SS.ffffff` ← 「已推到的媒体时间」（权威值）
+#   3) 播放（真机直连）
+xcrun devicectl device process launch --device <真机 UDID> --console \
+  --terminate-existing com.playerstack.demo -- -directURL rtsp://$MACIP:8554/live
+#   ⇒ 每秒一行 [status] … t=…/… ← 「正在显示的媒体时间」
+#   ⚠️ **两路必须合到同一时基**：out_time 是媒体时间、[status] 的时间戳是 App 自己的 origin，
+#      直接相减得到的是垃圾。做法：用一个采集进程同时拉起两者，给**每一行**盖同一个墙钟。
+#   ⚠️ **前提要验**：`-re` 的媒体时间推进速率应 ≈ 1.000×（实测 1.003×）。
+#      不验这一条，落后量里就混进了推流端偏差 —— 而它看起来完全正常。
+#   基线（2026-10-16 · 真机 iPhone 16 Pro）：起播 2063 ms · 落后量 ≈ 9000 ms（±50 ms，恒定）
+#   「恒定」是判据：不是漂移 ⇒ 是**缓存深度** ⇒ 去看 `cache-secs`（产品没设 ⇒ mpv 默认 10 s）。
+
 # ⑦ 真机（⚠️ 两套 Xcode 环境、两个 team ⇒ 构建时**命令行覆盖**，不改仓库）
 #   环境 A · 家里：team UKXWZ3FS84 · 真机 Tango / iPhone 16 Pro
 #   环境 B · 本机：team 3GMJYX32U9 · 真机 Tang的iPhone      ← `project.yml` 里写的是 A 的值

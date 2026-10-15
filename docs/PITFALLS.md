@@ -1435,6 +1435,36 @@ xcodebuild … -destination 'id=<本机真机 UDID>' DEVELOPMENT_TEAM=<本机 te
 - 落地前先验两件事再构建：`security find-identity -v -p codesigning`（找带私钥的证书）
   · `security cms -D -i <profile>` 看 `TeamIdentifier` 与 `ProvisionedDevices`（找覆盖本机设备的那一份）。
 
+**补（2026-10-16 实测更正 —— 上面那条口径里藏着一个错的前提）**：
+
+上面说"先验两件事"，容易被读成**证书也要与 `DEVELOPMENT_TEAM` 同 team**。**不必。** 实测：
+
+```
+签名身份：Apple Development: zhenzhi Tang (7H6TJ2PN25)      ← 证书自己的 team 是 7H6TJ2PN25
+描述文件：iOS Team Provisioning Profile: *                   ← TeamIdentifier = UKXWZ3FS84
+仓库值  ：DEVELOPMENT_TEAM = UKXWZ3FS84
+⇒ BUILD SUCCEEDED · install ✅ · launch ✅ · 真机跑通 ✅
+```
+
+**真规则**（三件事各管一段）：
+
+| 谁 | 管什么 |
+| --- | --- |
+| `DEVELOPMENT_TEAM` | **选哪一份描述文件**（它决定去要哪个 team 的通配描述文件）—— 所以它**必须**与描述文件的 `TeamIdentifier` 一致 |
+| 描述文件的 `ProvisionedDevices` | 这台设备**能不能装** |
+| 描述文件的 `DeveloperCertificates` | **签名能用哪把证书** —— 只要本机那把在**这个列表**里就行，**不看证书自己的 team** |
+
+判据命令（把两者一次性对上）：
+```bash
+# 描述文件里到底列了哪几把证书？拿 sha1 与本机证书比对
+security cms -D -i <profile> | plutil -extract DeveloperCertificates xml1 -o - - | …
+security find-identity -v -p codesigning     # 本机证书的 sha1 在括号里
+```
+
+⚠️ **为什么这条更正值钱**：`security find-identity` 里那把证书的 team 与仓库值**不一致**，
+看起来就是"团队不匹配、要去查账号"—— 而那正是 `P-055` 当初把人带偏的**同一个方向**。
+**"报错指向账号时，先去看描述文件里列了谁，而不是去登账号。"**
+
 ---
 
 ## P-056 · 「**立刻**失败」与「**超时**失败」是两种病 —— 别拿查网络的时间去查权限
