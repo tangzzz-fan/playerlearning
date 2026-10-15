@@ -38,7 +38,8 @@
 | [`docs/15-P6-T2-延迟指标.md`](docs/15-P6-T2-延迟指标.md) | `P6-T2`：**延迟怎么量**（起播 / 落后量两个指标）· 方法 · 基线。⚠️ §四 起播那条口径已由 `docs/17` 修正（文内已加标注） | 要看延迟数字时 |
 | [`docs/16-P6-T3-低延迟参数.md`](docs/16-P6-T3-低延迟参数.md) | `P6-T3`：低延迟默认值落地（`cache-secs=1` + `cache-pause-initial=no`）· **三段切分归因** · 代价量化 | 要改网络/缓存参数时 |
 | [`docs/17-P6-T4-起播延迟.md`](docs/17-P6-T4-起播延迟.md) | `P6-T4`：**起播分段归因**（三段各由谁决定）· 两处修复 · 更正 `docs/15`/`docs/16`/`P-045` 三处既有记载 | 起播慢 / 要动探测窗口时 |
-| [`docs/PITFALLS.md`](docs/PITFALLS.md) | **踩坑日志**（现象 → 根因 → 处置 → 防再犯），现有 `P-001`–`P-072`（**编号只增不删**），末段为**跨项目移植区**（来源 Marquee / HabitLoop / meta 待回流清单） | **动手前扫一遍**，能省掉重复排查 |
+| [`docs/18-P0-T5c-HTTPS行为验证.md`](docs/18-P0-T5c-HTTPS行为验证.md) | `P0-T5c`：**HTTPS 行为验证** —— 结论：**这个产物的 HTTPS 只加密、不校验证书**（真机+模拟器都接受不受信任/名字不匹配的证书）· 根因 · 三条修复路径 | **用 HTTPS 前必读** |
+| [`docs/PITFALLS.md`](docs/PITFALLS.md) | **踩坑日志**（现象 → 根因 → 处置 → 防再犯），现有 `P-001`–`P-075`（**编号只增不删**），末段为**跨项目移植区**（来源 Marquee / HabitLoop / meta 待回流清单） | **动手前扫一遍**，能省掉重复排查 |
 
 ## 工程结构
 
@@ -220,6 +221,30 @@ xcrun devicectl device process launch --device <真机 UDID> --console \
 #   ⚠️ 实时源另有一项产品侧改动：探测窗口缩到 0.2 s（`StreamProbePlan`，只对 rtsp/rtmp/srt/udp 生效；
 #      HTTP / 本地文件**不动**）—— 它把实时源的 `file-loaded` 从 1131–1206 ms 压到 **311–420 ms**。
 
+# ⑥g **HTTPS 行为取证**（`P0-T5c`：验"证书校验到底有没有生效"，报告见 docs/18）
+#   ⚠️ **结论先读**：这份产物的 HTTPS **只加密、不校验对端身份** ——
+#      不受信任的自签、甚至名字不匹配的证书，真机与模拟器都照播。
+#      根因在 FFmpeg 的 SecureTransport 后端（校验只在 `ca_file != nil` 时触发，
+#      而本构建 `HAVE_SECITEMIMPORT 0` ⇒ CA 文件永远加载不了）。修复待拍板。
+#   ① 造一次性证书（/tmp，不入仓库）。四项硬要求少一条会得到"另一种失败"：
+#      SAN 必填 · extendedKeyUsage=serverAuth · RSA≥2048 · 有效期 ≤825 天
+openssl req -x509 -newkey rsa:2048 -nodes -keyout /tmp/pl-tls/ca.key -out /tmp/pl-tls/ca.crt \
+  -days 2 -subj "/CN=PlayerStack Test CA" -addext "basicConstraints=critical,CA:TRUE" \
+  -addext "keyUsage=critical,keyCertSign,cRLSign"
+#   ② 起 HTTPS 服务器（本票给 serve-range.py 新增的开关）
+python3 Tools/serve-range.py --port 8443 --root /tmp/vidprobe2 \
+  --tls-cert /tmp/pl-tls/server.crt --tls-key /tmp/pl-tls/server.key
+#   ③ 模拟器上跑（⚠️ 清代理变量：代理会劫持回环请求，P-059）
+env -u HTTP_PROXY -u HTTPS_PROXY xcrun simctl launch --terminate-running-process \
+  --console-pty <UDID> com.playerstack.demo -- -directURL https://127.0.0.1:8443/x.mp4
+#   ⇒ 判据：**不受信任的证书必须失败**。实测它 `state=playing` ⇒ 校验没生效。
+#   ⇒ 拿会校验的客户端打同一台服务器做对照（同一个 TLS 后端）：
+curl -s -o /dev/null -w "%{http_code}\n" https://127.0.0.1:8443/x.mp4 -r 0-100   # → 000（拒）
+#   ④ 服务器侧会打 `[tls] 握手失败：… unknown ca` —— 那是"客户端真的校验并拒绝"的直接证据；
+#      只看客户端"没收货"不够：那与"压根没连上"看起来一样（P-074 / P-056）。
+#   ⚠️ 两个环境坑：`simctl launch --stdout/--stderr` 落不下东西（P-074，要用 --console-pty）；
+#      重装 app 会换数据容器路径（P-075）。
+
 # ⑦ 真机（⚠️ 两套 Xcode 环境、两个 team ⇒ 构建时**命令行覆盖**，不改仓库）
 #   环境 A · 家里：team UKXWZ3FS84 · 真机 Tango / iPhone 16 Pro
 #   环境 B · 本机：team 3GMJYX32U9 · 真机 Tang的iPhone      ← `project.yml` 里写的是 A 的值
@@ -352,7 +377,7 @@ playerlearning/
 
 | 项 | 说明 |
 | --- | --- |
-| HTTPS 流的实际行为 | 经董事长决定**跳过**（TLS 只证了"协议已启用"）—— 是已知缺口，不是已清项 |
+| ~~HTTPS 流的实际行为~~ → **已验证，发现缺陷** | `P0-T5c`（2026-10-16 补做）：**这里的 HTTPS 只加密、不校验证书** —— 不受信任/名字不匹配的证书都会被接受（真机+模拟器）。根因与三条修复路径见 [`docs/18`](docs/18-P0-T5c-HTTPS行为验证.md)（**推荐打一个小补丁让系统信任库生效**）。⚠️ **修复需重构建产物，尚未动** |
 | 切清晰度是否带动音轨 | ✅ **已答**：不带动（三档音频做成不同采样率实测，[`docs/14`](docs/14-P5-T5-HLS多码率调研.md) §8） |
 | 直播下的轨道清单 | **未测**（多档实测都是 VOD） |
 | HLS **直播**源的起播 | **未测**（`P6-T4` 只测了 VOD ladder） |
@@ -366,9 +391,9 @@ playerlearning/
 
 要继续往下推，只剩"**已知缺口**"与"**只能人做**"两类（都在上面「仍未覆盖」表里）：
 
-1. **HTTPS 流的实际行为** —— 需先决定是否补（当年被明确跳过）。要做的话：给
-   `Tools/serve-range.py` 加 `--tls-cert/--tls-key`，先验**不受信任的自签必须失败**（安全面），
-   再把 CA 装进模拟器信任库验正向。**记得 `P-059`：模拟器会继承会话代理，启动时要 `env -u HTTP_PROXY`。**
+1. **HTTPS 证书校验** —— ✅ 验证已完成（`P0-T5c`）：结论是**不校验身份**，属**安全缺口**。
+   修复未动，三条路见 [`docs/18`](docs/18-P0-T5c-HTTPS行为验证.md) §五（推荐打 FFmpeg 小补丁 ⇒ 系统信任库生效）。
+   无论选哪条都要**重构建产物**，并重跑"不受信任必须失败"。**这一项等一句话。**
 2. **直播下的轨道清单 / HLS 直播源的起播** —— 需要可控的 HLS 直播源（`ffmpeg → mediamtx` 已有，HLS 要另造）。
 3. **只能肉眼做的**：弱网缓冲提示的文案是否够清楚；键位的**手感**（判定与副作用已被单测与真机 UI 用例覆盖）。
 

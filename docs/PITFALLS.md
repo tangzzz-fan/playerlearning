@@ -1886,6 +1886,78 @@ Demo 一次性读出来打印），并把"每次冷启量一次"写进用法。
 
 ---
 
+## P-073 · 「默认值是 `1`」不等于「它真的在校验」—— 一条**永远走不到**的分支
+
+**现象**（`P0-T5c`）：自建产物的 HTTPS **接受不受信任的自签证书，也接受名字不匹配的证书** ——
+真机与模拟器都照播；同一台服务器，宿主 `curl`（`libcurl … (SecureTransport)`，**同一个 TLS 后端**）则拒绝。
+
+**根因**：FFmpeg 的 `tls_verify` **默认值确实是 1**（`libavformat/tls.h:93`），
+但真正做校验的那段 `SecTrustEvaluate` 位于一个**条件分支**里：
+
+```c
+if (s->ca_file || !s->verify)                       // ← 只有"给了 CA"或"明示不校验"才进来
+    SSLSetSessionOption(…, kSSLSessionOptionBreakOnServerAuth, true);
+…
+if (status == errSSLServerAuthCompleted) {          // ← 校验只在这里
+    if (!s->verify) continue;
+    … SecTrustSetAnchorCertificates + SecTrustEvaluate …
+}
+```
+而"给个 CA"这条路也被堵死：`import_pem` 开头 `#if !HAVE_SECITEMIMPORT return AVERROR_PATCHWELCOME;`，
+本构建 **`HAVE_SECITEMIMPORT 0`**（`config.h`；`nm -u` 里 `SecItemImport` **0 命中**）。
+
+⇒ `verify=1` + 无 CA ⇒ **不设 break ⇒ 那段代码永不执行 ⇒ 什么都不校验**。
+**三条路全堵，"值"是 1，"效果"是零。**
+
+**为什么长期没被发现**：三件事凑在一起 ——
+① 默认值读出来是"已开启"（读代码的人会以为在校验）；
+② mpv 的 511 行 verbose 日志里**关于 TLS 一个字都没有**；
+③ 症状是"HTTPS 能播"，而那**正是期望的结果**。
+
+**判据 / 防再犯**：
+**"开关的值"与"开关的效果"必须分别取证。** 值可以从源码与配置里读出来，
+**效果只能用一个"必须失败"的输入去打** —— 验安全相关的默认值，别读，去打。
+
+**同族**：`P-071`（`pause` 的值不等于"在播"）· 以及本项目反复记的
+**「协议已启用」≠「协议在起作用」**（`P0-T5b` 的 `CONFIG_HTTPS_PROTOCOL 1` 一直被当成后者）。
+
+---
+
+## P-074 · `simctl launch --stdout/--stderr` 会**静默落不下东西**：文件 0 字节
+
+**现象**：`xcrun simctl launch --stdout=<path> --stderr=<path> …` 之后，
+**文件被创建了、内容是空的**，于是一行输出都读不到 —— 看起来像"app 启动就死了"或"它什么都没打"。
+
+**根因**：本机这版 `simctl` 的这两个参数不生效（文件被创建，但 app 的 stdio 没接上去）。
+**它不报错**，所以症状全部指向被测对象。
+
+**处置 / 判据**：改用 `--console-pty` + 自己重定向到文件（与真机那条 `devicectl --console` 同构）：
+
+```zsh
+xcrun simctl launch --terminate-running-process --console-pty "$UDID" "$BUNDLE" -directURL "$URL" > log 2>&1 &
+sleep 8; xcrun simctl terminate "$UDID" "$BUNDLE"
+```
+**判据**：**"取证通道"必须先被证明是通的**（文件里有你确定会出现的头几行），
+再拿它去判断被测对象 —— 否则"零输出"就是**取证工具的失败**冒充被测对象的失败。
+
+---
+
+## P-075 · 重装 app 会**换数据容器路径** ⇒ 放进去的测试文件失效（而症状像是"功能坏了"）
+
+**现象**（`P0-T5c`）：把测试用的 CA 文件放进 app 的数据容器、把该路径写进配置，
+然后 `simctl install` 重装了一次 app —— 之后所有 HTTPS 都打不开。
+**差一点被读成"校验生效了，所以连正确的那张也拒"**。
+
+**根因**：`simctl install` 会创建**新的**容器目录（UUID 变了），旧路径下的文件不再被 app 读到；
+而"文件读不到"的后果是"CA 加载失败 ⇒ 连接失败"，与"校验成功但被拒"**症状一样**。
+
+**处置 / 判据**：容器路径**在装完之后现查**（`xcrun simctl get_app_container <udid> <bundle> data`），
+不要跨 install 复用；
+**更要紧的是判据**：**"三台里连证书完全正确的那台也失败"** ⇒ 这不可能是"校验太严"，
+只可能是"CA 根本没读到" —— **一组探针里正交变量的结果分布本身就是判据**。
+
+---
+
 > ### 与既有条目同源、故不重复展开的（仅登记映射，便于日后合并检索）
 >
 > | 其他项目的条目 | 本项目已有 |
