@@ -115,7 +115,7 @@ public actor MPVKernel: PlayerKernelProtocol {
     }
 
     public func load(_ resource: PlayerResource) async throws {
-        let handle = try prepare()
+        let handle = try prepare(resource)
         lastResource = resource
         emit(.stateChanged(.preparing))
         try send(handle, ["loadfile", resource.url.absoluteString, "replace"])
@@ -244,8 +244,11 @@ public actor MPVKernel: PlayerKernelProtocol {
         owner = nil
     }
 
-    private func prepare() throws -> OpaquePointer {
+    private func prepare(_ resource: PlayerResource) throws -> OpaquePointer {
         if let handle = owner?.pointer {
+            // 换文件时必须**重设**请求头：mpv 的选项挂在句柄上，
+            // 不重设就会把上一个文件的头继续发出去 —— 而且完全不报错。
+            applyRequestHeaders(handle, resource)
             return handle
         }
         guard let created = mpv_create() else {
@@ -253,7 +256,7 @@ public actor MPVKernel: PlayerKernelProtocol {
             throw MPVKernelError.creationFailed
         }
         do {
-            applyOptions(created)
+            applyOptions(created, resource)
             observeProperties(created)
             let status = mpv_initialize(created)
             guard status >= 0 else {
@@ -278,7 +281,7 @@ public actor MPVKernel: PlayerKernelProtocol {
         return created
     }
 
-    private func applyOptions(_ handle: OpaquePointer) {
+    private func applyOptions(_ handle: OpaquePointer, _ resource: PlayerResource) {
         if let windowEmbedHandle {
             var embedHandle = windowEmbedHandle
             _ = mpv_set_option(handle, "wid", MPV_FORMAT_INT64, &embedHandle)
@@ -299,7 +302,26 @@ public actor MPVKernel: PlayerKernelProtocol {
         // 删掉而不是"允许它失败"：**设一个不存在的选项，除了制造"我配过了"的错觉，
         // 没有任何作用。**
         applyNetworkOptions(handle)
+        applyRequestHeaders(handle, resource)
     }
+
+    /// 请求头注入（`P5-T4`）。
+    ///
+    /// 两条取值都**无条件写**，包括"空"：
+    /// mpv 的选项是挂在句柄上的，只在"有值"时才写，会让上一个文件的头**留着继续发**，
+    /// 而且不报任何错 —— 这正是 `P-047` 那种"旧东西静默挡住新的"。
+    ///
+    /// ⚠️ 首次加载时这段是在 `mpv_initialize` **之前**跑的（`applyOptions` 里），
+    /// 换文件时则是运行期重设 —— 两条路都必须能被 mpv 接受，
+    /// 由 `testEveryConfiguredOptionIsAcceptedByMPV` 一类的用例兜底（`rejectedOptions`）。
+    private func applyRequestHeaders(_ handle: OpaquePointer, _ resource: PlayerResource) {
+        let plan = RequestHeaders(resource.headers)
+        setOption(handle, "http-header-fields", plan.headerFields ?? "")
+        setOption(handle, "user-agent", plan.userAgent ?? Self.defaultUserAgent)
+    }
+
+    /// 没有自定义 UA 时的默认值 —— 不少 CDN 直接按 UA 拒绝，空 UA 是最容易被拒的一种。
+    private static let defaultUserAgent = "PlayerStack/1.0"
 
     /// 网络点播相关的 mpv 选项（`P5-T1` / `P5-T2`）。
     ///
@@ -322,8 +344,8 @@ public actor MPVKernel: PlayerKernelProtocol {
         setOption(handle, "demuxer-max-back-bytes", "16MiB")
         // 网络超时：太短会在弱网下误判为"流断了"，太长会让"打不开"迟迟不报错。
         setOption(handle, "network-timeout", "30")
-        // User-Agent 是最简形态的请求头注入（`P5-T4`）—— 不少 CDN 直接按 UA 拒绝。
-        setOption(handle, "user-agent", "PlayerStack/1.0")
+        // ⚠️ `user-agent` 不在这里设 —— 它归 `applyRequestHeaders`（UA 必须**单源**，
+        //    否则"写死的默认值"与"资源带的 UA"会互相盖，而谁生效没人说得清）。
     }
 
     /// 供测试断言：**空数组 = 所有配置过的选项 mpv 都认**。

@@ -1390,6 +1390,45 @@ guard let count = getInt64(handle, "playlist-count") else { return false }
 
 ---
 
+## P-055 · 同一仓库挂在**两套 Xcode 环境**上，团队号却是**写死的单值** ⇒ 报错指向"账号"这个假方向
+
+**现象**：在换了机器（或换了真机）之后，真机构建报
+
+```
+error: No "iOS Development" signing certificate matching team ID "UKXWZ3FS84" with a private key was found.
+error: Provisioning profile "iOS Team Provisioning Profile: *" doesn't include the currently selected
+       device "Tang的iPhone" (identifier 00008140-001E09D1262B001C).
+```
+
+而所有人（包括我上一轮）都会顺着这两条去查：登没登 Apple ID？证书过期没？账号权限够不够？
+**全是假方向** —— `-allowProvisioningUpdates` 只会再送你一条 `No Accounts`，把你钉在"账号问题"上。
+
+**根因**（两层，都在"环境"里，不在"账号"里）：
+
+① `Demo/project.yml` 的 `DEVELOPMENT_TEAM` 是**写死的单值**，而同一个仓库在**两套环境**里跑：
+   家里那台 = `UKXWZ3FS84`（`zhenzhi Tang` 个人号）· 本机 = `3GMJYX32U9`（公司号）。git 里只留得下一个值。
+② 一台机器能不能签，只取决于**本机**这两样东西，与账号无关：
+   - 钥匙串里有没有**该 team 且带私钥**的 `Apple Development` 证书；
+   - 该 team 的通配描述文件里**有没有这台设备**。
+
+本机实况：三个开发证书分属 `88D39V32YV` / `YXFC65VYTW` / `3GMJYX32U9`，**没有 `UKXWZ3FS84` 的私钥**；
+且 `UKXWZ3FS84` 通配描述文件覆盖的 6 台设备里是 **另一台** iPhone（`…000A288836FB001C`），不是当前这台。
+
+**判据**：**报错里出现 team ID 时，先问"这是哪台机器的 team"，别问"账号怎么了"。**
+"签名"是**环境 × 设备 × 证书**三者的交集，缺一不可；账号只是生成证书/描述文件的**上游**，不是构建时的判据。
+
+**处置**（口径 = 构建时命令行覆盖，仓库不动）：
+
+```bash
+xcodebuild … -destination 'id=<本机真机 UDID>' DEVELOPMENT_TEAM=<本机 team> build
+```
+
+- `project.yml` 保留一个值（当前 = 家里那台），**不为换环境反复改仓库**（否则两台机器会互相把对方的值改回去）；
+- 落地前先验两件事再构建：`security find-identity -v -p codesigning`（找带私钥的证书）
+  · `security cms -D -i <profile>` 看 `TeamIdentifier` 与 `ProvisionedDevices`（找覆盖本机设备的那一份）。
+
+---
+
 > ### 与既有条目同源、故不重复展开的（仅登记映射，便于日后合并检索）
 >
 > | 其他项目的条目 | 本项目已有 |

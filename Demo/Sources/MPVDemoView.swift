@@ -83,8 +83,33 @@ final class PlayerDemoModel {
     func loadDirect(_ url: URL) async {
         note = "直连：\(url.absoluteString)"
         Self.writeToStderr("[direct] url=\(url.absoluteString)")
-        await player.load(PlayerResource(url: url))
+        if !headerFields.isEmpty {
+            let spelled = headerFields
+                .sorted { $0.key < $1.key }
+                .map { "\($0.key): \($0.value)" }
+                .joined(separator: ",")
+            Self.writeToStderr("[direct] headers=\(spelled)")
+        }
+        await player.load(PlayerResource(url: url, headers: headerFields))
         await player.play()
+    }
+
+    /// `-headers "X-A: 1,X-B: 2"`：给网络播放注入请求头（`P5-T4`）。
+    ///
+    /// 形态刻意与 mpv 的 `http-header-fields` 一致（`Key: Value`、逗号分隔）——
+    /// 这样"命令行里写的"和"实际发出去的"是**同一份文本**，取证时不需要在脑子里翻译一遍。
+    private var headerFields: [String: String] {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-headers"), index + 1 < arguments.count else { return [:] }
+        return arguments[index + 1]
+            .split(separator: ",")
+            .reduce(into: [String: String]()) { result, pair in
+                let parts = pair.split(separator: ":", maxSplits: 1)
+                guard parts.count == 2 else { return }
+                let name = parts[0].trimmingCharacters(in: .whitespaces)
+                guard !name.isEmpty else { return }
+                result[name] = parts[1].trimmingCharacters(in: .whitespaces)
+            }
     }
 
     /// `-soakRounds <n>`：长跑/循环稳定性（每轮 ≈ 10 s）。

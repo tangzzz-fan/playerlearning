@@ -547,6 +547,52 @@ struct MPVKernelTests {
         await harness.shutdown()
     }
 
+    /// **带请求头加载时，`http-header-fields` / `user-agent` 都必须被 mpv 认。**
+    ///
+    /// 为什么这条必要：`setOption` 失败**不抛错**，只记进 `rejectedOptions`。
+    /// 所以"我设了头"与"头生效了"是两件事 —— 这条用例专门盯住前者不许静默。
+    /// （真正"头有没有发出去"由 `serve-range.py --echo-headers` 的端到端取证回答。）
+    @Test
+    func testRequestHeadersAreAcceptedByMPV() async throws {
+        let url = try await TestClip.makeURL()
+        defer { TestClip.remove(url) }
+        let harness = await KernelHarness()
+
+        try await harness.kernel.load(
+            PlayerResource(
+                url: url,
+                headers: ["X-Player-Test": "yes", "User-Agent": "PlayerStack-Test/2.0"]
+            )
+        )
+
+        let rejected = await harness.kernel.rejectedOptionNames()
+        #expect(rejected.isEmpty, "请求头相关选项被 mpv 拒绝 ⇒ 自定义头**静默不生效**：\(rejected)")
+        await harness.shutdown()
+    }
+
+    /// **换文件时必须重设请求头。**
+    ///
+    /// mpv 的选项挂在句柄上：不重设，上一个文件的头会**继续发给下一个文件**，而且不报错。
+    /// 这条同时盯住"运行期能不能改"这件事 —— 首次加载是在 `mpv_initialize` 之前设的，
+    /// 换文件走的是运行期重设，两条路都得被接受。
+    @Test
+    func testLoadingAnotherResourceResetsRequestHeaders() async throws {
+        let first = try await TestClip.makeURL()
+        let second = try await TestClip.makeURL()
+        defer {
+            TestClip.remove(first)
+            TestClip.remove(second)
+        }
+        let harness = await KernelHarness()
+
+        try await harness.kernel.load(PlayerResource(url: first, headers: ["X-First": "1"]))
+        try await harness.kernel.load(PlayerResource(url: second, headers: ["X-Second": "2"]))
+
+        let rejected = await harness.kernel.rejectedOptionNames()
+        #expect(rejected.isEmpty, "运行期重设请求头被 mpv 拒绝 ⇒ 换文件后会继续发旧头：\(rejected)")
+        await harness.shutdown()
+    }
+
     // MARK: - 播放控制（`stop` / `play` 的真实语义）
 
     /// **「停止」之后再点「播放」必须能重新播起来。**
