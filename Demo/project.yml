@@ -79,12 +79,41 @@ targets:
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_ENTITLEMENTS: ""
         ENABLE_USER_SCRIPT_SANDBOXING: NO
+  # ⚠️ UI 自动化**刻意用 XCTest**：`XCUIApplication` 在 Swift Testing 里没有等价能力 ——
+  #    这是工具边界，不是"忘了迁移"（先例：`docs/03` L457–458 · `docs/11` L41–45）。
+  # 2026-10-16 恢复：此前随自动门禁一并移除（`docs/03` L440–442），
+  #    董事长决定加回来 —— 目的是**减少手动测试**，并配合模拟器截图取证。
+  PlayerStackDemoUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: PlayerStackDemo
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.playerstack.demo.uitests
+        SWIFT_VERSION: "6.0"
+        DEVELOPMENT_TEAM: UKXWZ3FS84
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        # ⚠️ **必须显式打开**：xcodegen 不会给 `bundle.ui-testing` target 生成 Info.plist
+        #    （app target 有 `info.path`，测试 bundle 没有）⇒ 报
+        #    「Cannot code sign because the target does not have an Info.plist file」。
+        #    注意**别**给它指定 `info.path` —— 那会踩 `P-057`（两个 target 抢同一个 plist，
+        #    后写的整个覆盖前一份）。让 Xcode 现生成才是这条路。
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   # xcodegen 默认**不生成** scheme，必须显式声明，否则 xcodebuild -scheme / CI 都用不了。
   PlayerStackDemo:
     build:
       targets:
         PlayerStackDemo: all
+        PlayerStackDemoUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - PlayerStackDemoUITests
     run:
       config: Debug
     archive:
