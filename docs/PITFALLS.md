@@ -1681,6 +1681,54 @@ UI 那 92 条**从来没进过证据**。数字对、结论窄：这类偏差不
 
 ---
 
+## P-066 · xcodegen 不给 `bundle.ui-testing` target 生成 Info.plist；而给它写 `info.path` 会踩 `P-057`
+
+**现象**：给 Demo 加回 UI 自动化 target，`xcodebuild test` 直接死在签名阶段：
+```
+error: Cannot code sign because the target does not have an Info.plist file and one is
+not being generated automatically. Apply an Info.plist file to the target using the
+INFOPLIST_FILE build setting or generate one automatically by setting the
+GENERATE_INFOPLIST_FILE build setting to YES (recommended).
+(in target 'PlayerStackDemoUITests' from project 'PlayerStackDemo')
+```
+
+**根因**：app target 有 `info.path`（我们显式给了），所以它自带 plist；
+测试 bundle **没有**，而 xcodegen 也**不会**替它生成 —— 两边的默认行为不一致。
+
+**处置（两条都记下，因为第一条是陷阱）**：
+1. ✅ **`GENERATE_INFOPLIST_FILE: YES`** —— 让 Xcode 现生成，各 target 各一份，互不干扰。
+2. ❌ **不要**给测试 target 也写 `info.path` —— 那是 `P-057` 的**同一条坑**：
+   两个 target 往同一个文件写，**后写的整个覆盖前一份**，不合并、不报错。
+
+**判据**：**"缺 plist" 的正解是"生成"，不是"指定"** —— 只要有两个 target 共享一个路径，
+就已经在 `P-057` 的射程里了（哪怕当下看着是好的）。
+
+---
+
+## P-067 · 把一种取证手段的失败，推广成"这件事没法取证"
+
+**背景（本项目真发生过）**：宿主侧 `screencapture` 报 `could not create image from display`
+（TCC 没给屏幕录制权限，且与沙箱无关），于是结论被写成**"本机做不了截图取证"**。
+
+**2026-10-16 实测：模拟器截图从来就不需要那个权限。**
+```bash
+xcrun simctl io <udid> screenshot out.png     # → PNG 1206x2622，零权限、零提示
+```
+它读的是**模拟器自己的 framebuffer**，与"截宿主屏幕"是两条完全不同的通路。
+UI 自动化里同理：`XCUIScreen.main.screenshot()` 直接在**那个状态**截，比事后截宿主屏幕更准。
+
+**判据**：
+- 被拦住的往往是**某一条通路**（宿主屏幕 / 某个 API），而不是"这件事本身"。
+- 手上有**受管环境**时（模拟器、容器、虚拟机），**优先问"它自己有没有取景口"**，
+  而不是先问"我怎么穿过宿主的权限"。
+- 与 `P-052` 同族：**环境能力缺口会被写进结论，然后一直挡着后面的人**。
+
+**代价具体**：这条错误结论让"UI 观感无法自动化"多撑了几天，靠人手动点。
+
+---
+
+---
+
 
 > ### 与既有条目同源、故不重复展开的（仅登记映射，便于日后合并检索）
 >

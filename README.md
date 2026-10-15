@@ -50,6 +50,8 @@ Tests/
 Tools/                   ← serve-range.py（Range/弱网取证服务器）· stage-libmpv.sh
 MPV/                     ← ⚠️ 独立包 PlayerMPV：libmpv 适配器（只在 iOS 上编译，见下）
 Demo/                    ← app shell（project.yml → xcodegen 生成，产物不入仓）
+├── UITests/             ← UI 自动化（**刻意用 XCTest**，见下）
+└── Sources/
 ```
 
 **验收标准就一条：项目能正确运行，`swift test` 全绿。**
@@ -69,11 +71,23 @@ cd Demo && xcodegen generate           # 新增源文件后必须重跑（P-030�
 xcodebuild -project PlayerStackDemo.xcodeproj -scheme PlayerStackDemo \
   -destination 'platform=iOS Simulator' build
 
+# ③b **UI 自动化**（`Demo/UITests`，4 条：控制层 / 点画面切换 / 全屏 / **键盘 F**）
+#    不需要任何媒体或网络 ⇒ 确定性夹具（P-033）。跑在模拟器上，**不需要屏幕录制权限**。
+bash ~/.workbuddy/skills/ios-build-test/scripts/ios-run.sh test \
+  --project PlayerStackDemo.xcodeproj --scheme PlayerStackDemo --sim <udid> \
+  --result-bundle /tmp/pl-ui.xcresult
+#   ⇒ ** TEST SUCCEEDED ** · Executed 4 test（每条都把 [ui] 事实打到 stderr，日志里可读）
+#   导出截图（XCUIScreen 截图挂在报告里，keepAlways ⇒ 成功也留）：
+xcrun xcresulttool export attachments --path /tmp/pl-ui.xcresult --output-path /tmp/pl-ui-shots
+#   ⚠️ UI 自动化**刻意用 XCTest**（`XCUIApplication` 在 Swift Testing 里没有等价能力）——
+#      工具边界，不是"忘了迁移"（docs/03 L457–458 · docs/11 L41–45）
+#   ⚠️ 它证的是**手指/键盘真的落到控件上**；链路与内核语义由 ④/⑤ 那三个入口证（互补）
+
 # ④ 播放控制回归（`-exerciseControls` 跑「加载 → 播 → 停 → 再播」，逐拍打点）
 xcrun simctl launch --console <udid> com.playerstack.demo -exerciseControls -traceUpdates
 #   ⇒ [exercise] loaded→playing / stopped→idle / replayed→playing
-#   ⚠️ 它证明"控制链路 + 内核语义"是通的；**不能**证明手指有没有点到按钮上 ——
-#      点击本身无法自动化（UI 测试已按决定移除），那件事只能真机手测。
+#   ⚠️ 它证明"控制链路 + 内核语义"是通的（真 libmpv 上）；**不能**证明手指有没有点到按钮上 ——
+#      那一段由 ③b 的 UI 自动化证。**两者互补，不互相替代**（2026-10-16 UI 自动化已恢复）。
 
 # ⑤ 长跑稳定性（每轮走完 load→play→seek→pause→play→stop，逐轮打点内存）
 xcrun simctl launch --console <udid> com.playerstack.demo -soakRounds 30
@@ -156,6 +170,9 @@ xcrun devicectl device install app --device <UDID> \
 > 换设备先跑 `bash ~/.workbuddy/skills/install.sh`（实体随 Marquee 仓库走）。
 
 > ⚠️ **测试一律用 Swift Testing**（`@Test` / `#expect` / `try #require`），**不使用 XCTest**。触及 `CAMetalLayer` 的套件须显式 `@Suite(.serialized)`（并行是默认）。
+> ⚠️ **唯一例外：`Demo/UITests` 用 XCTest** —— UI 自动化需要 `XCUIApplication`，
+> **Swift Testing 没有等价能力**。这是工具边界，不是"忘了迁移"，已写在文件头注释里，
+> 避免日后被当违规清理（先例：`docs/03` L457–458 · [`docs/11`](docs/11-P3验证报告.md) L41–45）。
 > ⚠️ **`Demo/project.yml` 必须显式声明 `schemes:`** —— xcodegen **默认不生成** scheme，没有它 `xcodebuild -scheme` 与 CI 全不可用（见 `P-030`）。
 
 > ⚠️ **`PlayerCore` 里出现 `import SwiftUI` / `UIKit` / `AppKit` 即视为违规** —— 破了就永久失去可测性（KSPlayer 的教训），这是一条**架构约束**，与有没有自动门禁无关。
@@ -180,8 +197,10 @@ xcrun devicectl device install app --device <UDID> \
 - **全屏**：macOS 落成**窗口真全屏**（`NSWindow.toggleFullScreen`，**先比对再调**，
   否则会在动画中途把窗口卡在半屏）；iOS 落成**状态栏 + home 指示条让位**。
   平台差异只收在 `PlayerHostFullscreen.swift` 一个文件里。
-- ⚠️ 键位的**实际手感**没有自动化覆盖（UI 自动化测试已按董事长决定移除）⇒ 需要人按一次。
-  自动化能证的是**判定与副作用**：`PlayerShortcutTests`（9 条）+ `PlayerViewModelShortcutTests`（7 条）。
+- ⚠️ **键盘**这一格已由 `Demo/UITests` 自动覆盖（`app.typeKey` 在 iOS 模拟器上可用，
+  且"按 F 进全屏"的截图与"点全屏按钮"**逐字节相同**）—— 2026-10-16 补上。
+  判定与副作用另有单测：`PlayerShortcutTests`（9 条）+ `PlayerViewModelShortcutTests`（7 条）。
+- ⚠️ **仍未覆盖**：真机上的同一批用例（模拟器通过 ≠ 真机通过）。
 
 ## 目录结构
 
