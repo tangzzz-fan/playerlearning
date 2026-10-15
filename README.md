@@ -44,8 +44,10 @@ Package.swift            ← 根包 PlayerStack：PlayerCore / PlayerUI 双 targ
 Sources/
 ├── PlayerCore/          ← 内核边界与状态机（⛔ 禁止 import SwiftUI / UIKit / AppKit）
 └── PlayerUI/            ← SwiftUI 视图层
-Tests/PlayerCoreTests/   ← 纯逻辑单测 + 集成测试（跑在 macOS）
-Tools/                   ← gate.sh（G1 门禁）· mutation_check.py · stage-libmpv.sh
+Tests/
+├── PlayerCoreTests/     ← 纯逻辑单测 + 集成测试（跑在 macOS）
+└── PlayerUITests/       ← UI 侧的**纯逻辑**模型 + 视图模型（同样跑在 macOS，不起模拟器）
+Tools/                   ← serve-range.py（Range/弱网取证服务器）· stage-libmpv.sh
 MPV/                     ← ⚠️ 独立包 PlayerMPV：libmpv 适配器（只在 iOS 上编译，见下）
 Demo/                    ← app shell（project.yml → xcodegen 生成，产物不入仓）
 ```
@@ -55,6 +57,8 @@ Demo/                    ← app shell（project.yml → xcodegen 生成，产�
 ```bash
 # ① 根包（纯逻辑，日常就是它）
 swift build && swift test              # ⚠️ 受限 shell 需加 --disable-sandbox（见下）
+#   ⚠️ 输出里有**两份** `Test run with …` 汇总（`PlayerCoreTests` + `PlayerUITests`，各自一个进程）
+#      ⇒ 用 `| tail` 收口只会看到最后一份。**报"全绿"时几份数字都要给**（P-065）。
 
 # ② MPV 包（libmpv 适配器，只编译 iOS）
 ./Tools/stage-libmpv.sh                # 产物 104 MB 且 gitignored ⇒ 换设备后**必须先跑一次**
@@ -158,6 +162,26 @@ xcrun devicectl device install app --device <UDID> \
 > ⚠️ **根包不得引用 libmpv** —— 适配器只在 `MPV/` 独立包内。原因：自建产物**只有 iOS 切片**，而 SPM 会校验 `binaryTarget` 路径存在性（与平台条件无关）⇒ 一旦放进根包，**新克隆的 `swift test` 必失败**。
 > ⚠️ **以 `AsyncStream` 为边界的测试必须能"收尾 + 排空 + 断言 nil"**，否则只会"过"或"挂死"（见 `docs/PITFALLS.md` `P-014`）。
 > ⚠️ **每个"边界 + 消费者"的组合必须有集成测试** —— 单元测试全绿不等于部件能组合（见 `P-018`）。
+
+## 操作：键盘 · 全屏（`P7-T2`）
+
+| 键 | 作用 | 什么时候有效 |
+| --- | --- | --- |
+| `空格` / `K` | 播放 / 暂停 | 加载过文件之后 |
+| `←` / `J` | 后退 10 s | 同上，且**时长已知** |
+| `→` / `L` | 前进 10 s | 同上 |
+| `S` | 停止 | 同上，且不在 `idle` |
+| `F` | 全屏开关 | **任何时候**（与有没有视频无关） |
+| `Esc` | 退出全屏 | **仅在全屏时**；非全屏**不吞这个键**，原样交给宿主 |
+
+- 字母键**大小写都认** —— 按住 Shift 不会失灵。
+- **快捷键与按钮共用同一套可用性判据**（`canPlay` / `canStop` / `canSkip`）：
+  按钮灰着时对应快捷键也没反应，不会出现"键盘能按、按钮不能按"这种更让人困惑的状态。
+- **全屏**：macOS 落成**窗口真全屏**（`NSWindow.toggleFullScreen`，**先比对再调**，
+  否则会在动画中途把窗口卡在半屏）；iOS 落成**状态栏 + home 指示条让位**。
+  平台差异只收在 `PlayerHostFullscreen.swift` 一个文件里。
+- ⚠️ 键位的**实际手感**没有自动化覆盖（UI 自动化测试已按董事长决定移除）⇒ 需要人按一次。
+  自动化能证的是**判定与副作用**：`PlayerShortcutTests`（9 条）+ `PlayerViewModelShortcutTests`（7 条）。
 
 ## 目录结构
 

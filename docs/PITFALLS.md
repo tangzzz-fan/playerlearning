@@ -1653,6 +1653,34 @@ BrokenPipeError: [Errno 32] Broken pipe
 
 ---
 
+## P-065 · `swift test` 的汇总**不是一份**：多个测试目标各打一份，`| tail` 只会看到一个
+
+**现象**：我给 `PlayerUITests` 新增了 16 条用例，重跑全量测试，汇总行**纹丝不动**：
+`✔ Test run with 229 tests in 21 suites passed`。第一反应是"新用例根本没被编译进去"。
+
+**真因**：根包有**两个**测试目标（`PlayerCoreTests` / `PlayerUITests`），
+每个目标是一个**独立的测试进程**，**各打一份** `Test run with …` 汇总 —— 而我一直用
+`swift test … | tail -30` 收口，于是**永远只看到排在最后的那一份**（Core 的 229）。
+真实的输出是两份：
+
+```
+✔ Test run with  92 tests in 12 suites passed after 0.702 seconds.   ← PlayerUITests
+✔ Test run with 229 tests in 21 suites passed after 0.008 seconds.   ← PlayerCoreTests
+```
+
+**后果（比数字本身严重）**：前几轮我报的「根包 229 tests 全绿」**只覆盖了 `PlayerCoreTests`** ——
+UI 那 92 条**从来没进过证据**。数字对、结论窄：这类偏差不会被任何断言抓到，
+只会让"我们验了多少"悄悄少一块。
+
+**处置 / 判据**：
+- 收集测试输出**不要用 `tail` 当"全量"**：写到文件，再 `grep -n "Test run with"` 逐份读。
+- **判据：汇总行出现几次，就有几个测试目标。** 数字要以**逐份相加**为准，不能以最后一行为准。
+- 与 `P-027`（失败行不在常见匹配模式里）同族：**取证形态本身会掩盖一半事实**。
+
+**防再犯**：报"测试全绿"时，**路径上几个测试目标，就给几份数字**（本仓库 = 2）。
+
+---
+
 
 > ### 与既有条目同源、故不重复展开的（仅登记映射，便于日后合并检索）
 >
