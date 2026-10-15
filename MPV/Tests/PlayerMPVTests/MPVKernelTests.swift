@@ -126,6 +126,13 @@ struct MPVKernelTests {
             states.contains(.readyToPlay) && states.contains(.playing),
             "实际状态序列：\(states)"
         )
+        // `.playing` 必须**晚于** `.readyToPlay`：文件打开之前没有任何东西在播（见 `P6-T4`）。
+        let ready = try #require(states.firstIndex(of: .readyToPlay))
+        let playing = try #require(states.firstIndex(of: .playing))
+        #expect(
+            playing > ready,
+            "`.playing` 早于 `.readyToPlay` ⇒ 内核在文件打开前就宣布在播；实际序列：\(states)"
+        )
         await harness.shutdown()
     }
 
@@ -570,6 +577,25 @@ struct MPVKernelTests {
         await harness.shutdown()
     }
 
+    /// **实时源的短探测窗口，mpv 必须认。**
+    ///
+    /// 取值规则由 `StreamProbePlanTests` 用纯逻辑钉死；这里只回答另一半 ——
+    /// "我设了"是否等于"它认了"（`P5-T2` 的判据：选项写错名字时**只返回负值、不报错**）。
+    ///
+    /// ⚠️ 刻意**不真的连流**：选项是在 `mpv_initialize` **之前**设的，
+    /// 所以"设了没有"不需要一个能连上的服务器（要服务器就会让夹具不确定，`P-033`）。
+    @Test
+    func testRealtimeProbeWindowOptionIsAcceptedByMPV() async throws {
+        let harness = await KernelHarness()
+        let url = try #require(URL(string: "rtsp://127.0.0.1:8554/playerlearning-probe-test"))
+
+        try? await harness.kernel.load(PlayerResource(url: url))
+
+        let rejected = await harness.kernel.rejectedOptionNames()
+        #expect(rejected.isEmpty, "以下选项 mpv 没接受 ⇒ 短窗口**静默不生效**：\(rejected)")
+        await harness.shutdown()
+    }
+
     /// **换文件时必须重设请求头。**
     ///
     /// mpv 的选项挂在句柄上：不重设，上一个文件的头会**继续发给下一个文件**，而且不报错。
@@ -770,6 +796,124 @@ struct MPVKernelTests {
             snapshot.state == .idle,
             "stop 之后 pause 被重置为 no，不该把状态拽回 .playing；实测 \(snapshot.state)"
         )
+        await harness.shutdown()
+    }
+
+    // MARK: - 起播时间线（`P6-T4`）
+
+    /// **文件还没打开完，内核不能报「正在播放」。**
+    ///
+    /// 这是起播埋点顺手照出来的第二个缺陷。`[startup]` 显示：`load()` + `play()` 之后
+    /// **2 ms** 就报了 `.playing`，而 `file-loaded` 要 **57–1200 ms** 才到 —— 早了三个数量级。
+    /// 对**打不开的文件**更荒谬：先报 `.playing`，再报 `.failed`。
+    ///
+    /// 为什么一直没被发现：装配层（`PlayerStateMachine`）恰好把 `.preparing → .playing`
+    /// 列为**非法边**，于是那句话被静默拒收、界面从没显示错状态。
+    /// 但内核自己的 `state` 确实是假的 —— **`snapshot()` 会给任何消费者同一个假答案**。
+    /// 判据同 `P-038`：靠"下游正好把它挡掉了"活着，不叫正确。
+    @Test
+    func testPlayingIsNotAnnouncedWhileTheFileIsStillOpening() async throws {
+        let harness = await KernelHarness()
+        let missing = URL(fileURLWithPath: "/nonexistent/playerlearning-missing.mkv")
+
+        try? await harness.kernel.load(PlayerResource(url: missing))
+        // 真机上的调用顺序就是这样（`loadDirect` = load 之后紧跟 play）。
+        await harness.kernel.play()
+
+        try await harness.waitFor("出现 .failed") { $0 == .stateChanged(.failed) }
+        let states = await harness.states()
+        #expect(
+            !states.contains(.playing),
+            "文件根本没打开，不该出现 `.playing`（那是句无法支持的话）；实际序列：\(states)"
+        )
+        await harness.shutdown()
+    }
+
+    /// **起播的每个节点都要被打上，而且顺序必须是对的。**
+    ///
+    /// 为什么这条本身值得测：分段是**归因的前提** —— 缺一个节点，
+    /// "哪一段占了多少"就算错；顺序错了（比如 `vo-configured` 跑到 `file-loaded` 之前），
+    /// 归因方向整个反掉，而两种情况都**不会报错**，只会给出一张看起来正常的表。
+    ///
+    /// ⚠️ 这里**不断言** `playing` 与 `vo-configured` 的先后，只断言它们都在、
+    /// 且都晚于 `file-loaded`：实测两者的先后是**环境相关**的（那是被量的对象，不是契约）。
+    @Test
+    func testStartupTimelineIsCompleteAndOrdered() async throws {
+        let url = try await TestClip.makeURL()
+        defer { TestClip.remove(url) }
+        let harness = await KernelHarness()
+
+        try await harness.kernel.load(PlayerResource(url: url))
+        try await harness.waitFor("先播起来") { $0 == .stateChanged(.playing) }
+
+        // 「出画」晚于「内核说在播」是本票要量的东西 ⇒ 必须**单独等它**，
+        // 等不到就是红，而不是"读一份没有它的残表然后看似正常地通过"。
+        try await waitUntil("报告视频输出已配置", timeout: .seconds(20)) {
+            await harness.kernel.startupTimeline().mark(StartupTimeline.Step.voConfigured) != nil
+        }
+
+        let timeline = await harness.kernel.startupTimeline()
+        let names = timeline.marks.map(\.name)
+        #expect(names.first == StartupTimeline.Step.loadEntered, "第一个节点必须是 load 入口；实际：\(names)")
+
+        let required = [
+            StartupTimeline.Step.handleCreated,
+            StartupTimeline.Step.optionsApplied,
+            StartupTimeline.Step.initialized,
+            StartupTimeline.Step.loadfileSent,
+            StartupTimeline.Step.fileLoaded,
+            StartupTimeline.Step.voConfigured,
+            StartupTimeline.Step.playing,
+        ]
+        for step in required {
+            #expect(names.contains(step), "缺节点 `\(step)`；实际：\(names)")
+        }
+
+        // 单调：相对毫秒必须随节点顺序递增（时钟取错或算错都会破坏它）。
+        let times = timeline.marks.map(\.milliseconds)
+        #expect(times == times.sorted(), "时间线必须单调不减；实际：\(times)")
+
+        let sent = try #require(timeline.mark(StartupTimeline.Step.loadfileSent))
+        let loaded = try #require(timeline.mark(StartupTimeline.Step.fileLoaded))
+        let firstFrame = try #require(timeline.mark(StartupTimeline.Step.voConfigured))
+        #expect(sent <= loaded, "`loadfile` 必须先发出、再收到 FILE_LOADED")
+        #expect(loaded <= firstFrame, "FILE_LOADED 必须早于出画")
+        await harness.shutdown()
+    }
+
+    /// **换文件是一次新的起播** ⇒ 时间线必须重来。
+    ///
+    /// 不重来会怎样：读到的数字全是**上一次**的，而且它们**依旧自洽**
+    /// （顺序对、单调、节点齐全）⇒ 读的人看不出区别，只会拿上一轮的耗时去解释这一轮。
+    /// 同族风险：`P-038`（「问现在是什么，别信本地记的那一份」）。
+    @Test
+    func testStartupTimelineRestartsOnEveryLoad() async throws {
+        let first = try await TestClip.makeURL()
+        let second = try await TestClip.makeURL()
+        defer {
+            TestClip.remove(first)
+            TestClip.remove(second)
+        }
+        let harness = await KernelHarness()
+
+        try await harness.kernel.load(PlayerResource(url: first))
+        try await harness.waitFor("第一个文件播起来") { $0 == .stateChanged(.playing) }
+        let firstTimeline = await harness.kernel.startupTimeline()
+        #expect(
+            firstTimeline.mark(StartupTimeline.Step.handleCreated) != nil,
+            "首次加载会建句柄，必须留下这一节点；实际：\(firstTimeline.marks.map(\.name))"
+        )
+
+        try await harness.kernel.load(PlayerResource(url: second))
+        let secondTimeline = await harness.kernel.startupTimeline()
+        let names = secondTimeline.marks.map(\.name)
+
+        #expect(
+            secondTimeline.mark(StartupTimeline.Step.handleCreated) == nil,
+            "换文件不会重建句柄 ⇒ 上一轮的节点不该还在；实际：\(names)"
+        )
+        let restartedAt = try #require(secondTimeline.mark(StartupTimeline.Step.loadEntered))
+        #expect(restartedAt < 1, "新一轮的起点必须归零；实际：\(secondTimeline.marks)")
         await harness.shutdown()
     }
 }

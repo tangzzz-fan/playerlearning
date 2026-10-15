@@ -21,6 +21,13 @@ final class PlayerDemoModel {
     let player: PlayerViewModel
     private(set) var note = ""
 
+    #if os(iOS)
+    /// 装配点握着**具体内核**。起播时间线是适配器层的能力，**刻意不上协议** ——
+    /// 协议上每加一条，所有内核（含测试里的假内核）都要实现一遍，
+    /// 而"起播分成几段"只对真 mpv 有意义（见 `MPVKernel.startupTimeline()`）。
+    private let mpvKernel: MPVKernel
+    #endif
+
     private let traces = ProcessInfo.processInfo.arguments.contains("-traceUpdates")
     private let origin = Date()
     private var memory: Task<Void, Never>?
@@ -35,7 +42,9 @@ final class PlayerDemoModel {
             // ⇒ **大声死**，而不是静默退回无画面（那正是 `P2-T7` 要消灭的失败形态）。
             fatalError("WindowEmbedOutput 未给出 wid 句柄")
         }
-        player = PlayerViewModel(controller: PlayerController(kernel: MPVKernel(windowEmbedHandle: handle)))
+        let kernel = MPVKernel(windowEmbedHandle: handle)
+        mpvKernel = kernel
+        player = PlayerViewModel(controller: PlayerController(kernel: kernel))
         #else
         // macOS：使用 stub kernel（Phase 7 只验证编译，运行时功能由 iOS 验证）
         player = PlayerViewModel(controller: PlayerController(kernel: MacOSStubKernel()))
@@ -72,6 +81,7 @@ final class PlayerDemoModel {
             await exerciseFinish()
         } else if let direct = directURL, let url = URL(string: direct) {
             await loadDirect(url)
+            await reportStartup()
             // 清晰度的取证必须挂在**网络源**上（多档只存在于 HLS 的 master 清单里）。
             if exerciseTracks {
                 await exerciseTrackSwitch()
@@ -109,6 +119,33 @@ final class PlayerDemoModel {
         }
         await player.load(PlayerResource(url: url, headers: headerFields))
         await player.play()
+    }
+
+    /// 把内核记下的**起播分段**打出来（`P6-T4`）。
+    ///
+    /// 为什么不在这里自己掐表：`[status]` 是每秒一行 ⇒ 量化到 **1 秒**（±1 s），
+    /// 而 `docs/15` 的基线就是这么取的 —— **±1 s 的尺子量不出 300 ms 的改善**，
+    /// 量出来的"变快了"只是采样相位的运气。内核用同一台单调时钟在节点上打点，精度是毫秒。
+    ///
+    /// ⚠️ 必须**等出画**再读：`vo-configured` 晚于"内核说在播"，一看到 `playing` 就读
+    /// 只会读到一份没有出画节点的、看起来很正常的残表。等待**有上限**（不设上限的等待会挂死）。
+    private func reportStartup() async {
+        #if os(iOS)
+        var waited = 0
+        while waited < 200 {
+            let timeline = await mpvKernel.startupTimeline()
+            if timeline.mark(StartupTimeline.Step.voConfigured) != nil { break }
+            try? await Task.sleep(for: .milliseconds(100))
+            waited += 1
+        }
+        let timeline = await mpvKernel.startupTimeline()
+        let marks = timeline.marks
+            .map { "\($0.name)=\(String(format: "%.1f", $0.milliseconds))" }
+            .joined(separator: " ")
+        let toFrame = timeline.mark(StartupTimeline.Step.voConfigured).map { String(format: "%.0f", $0) } ?? "未到达"
+        let toPlaying = timeline.mark(StartupTimeline.Step.playing).map { String(format: "%.0f", $0) } ?? "未到达"
+        Self.writeToStderr("[startup] 出画=\(toFrame)ms · 内核说在播=\(toPlaying)ms · 分段: \(marks)")
+        #endif
     }
 
     /// `-headers "X-A: 1,X-B: 2"`：给网络播放注入请求头（`P5-T4`）。

@@ -10,6 +10,57 @@ public enum MPVKernelError: Error, Equatable, Sendable {
     case commandFailed(name: String, code: Int32)
 }
 
+/// **起播时间线**（`P6-T4`）：从 `load()` 进入的那一刻起，各关键节点的相对墙钟（毫秒）。
+///
+/// 为什么必须有它 —— 两个各自独立的问题：
+///
+/// ① **分辨率不够**。`docs/15` 定下的指标 A 此前只能靠每秒一行的 `[status]` 取，
+///    量化到 **1 秒**（±1 s）。拿一个 ±1 s 的尺子去判断 300–500 ms 的优化，
+///    结果只能靠猜 —— **尺子不够细，量出来的"改善"就不是证据**。
+/// ② **终点选错了**。`docs/15` 说指标 A 量的是"用户点开之后**等多久出画**"，
+///    而播放器报 `.playing` 的时刻**远早于出画**（见 `Step.playing` 与 `Step.voConfigured`
+///    的实测间隔）。把"内核说在播"当成"用户看到画面"，等于**量了一个不是用户感受的东西**。
+///
+/// 两个问题用同一把尺子解决：**同一台单调时钟**（`ContinuousClock`，不受墙钟调整影响）、
+/// 毫秒精度、节点分段。分段之后"哪一段占了多少"才可归因（同 `docs/16` 三段切分的做法）。
+public struct StartupTimeline: Sendable, Equatable {
+    /// 一个节点：名字 + 相对 `load()` 入口的毫秒数。
+    public struct Mark: Sendable, Equatable {
+        public let name: String
+        public let milliseconds: Double
+
+        public init(name: String, milliseconds: Double) {
+            self.name = name
+            self.milliseconds = milliseconds
+        }
+    }
+
+    /// **按记录顺序**（即时间顺序）排列 —— 顺序本身就是证据：
+    /// `playing` 若排在 `voConfigured` 之前，就说明"在播"早于"出画"。
+    public let marks: [Mark]
+
+    public init(marks: [Mark]) {
+        self.marks = marks
+    }
+
+    /// 取某节点的相对毫秒；同名节点只会有第一个（记录时去重）。
+    public func mark(_ name: String) -> Double? {
+        marks.first { $0.name == name }?.milliseconds
+    }
+
+    /// 节点名常量。集中在一处 —— 调用方各写各的字符串时，写错了只会**静默取到 `nil`**。
+    public enum Step {
+        public static let loadEntered = "load-entered"
+        public static let handleCreated = "handle-created"
+        public static let optionsApplied = "options-applied"
+        public static let initialized = "initialized"
+        public static let loadfileSent = "loadfile-sent"
+        public static let fileLoaded = "file-loaded"
+        public static let voConfigured = "vo-configured"
+        public static let playing = "playing"
+    }
+}
+
 /// mpv 唤醒回调的**可安全持有**的触发器。
 ///
 /// `mpv_set_wakeup_callback` 只接受一个 `void *` 上下文，而回调**可能从 mpv 自己的线程打进来**。
@@ -75,6 +126,13 @@ public actor MPVKernel: PlayerKernelProtocol {
     /// 期望的日志级别。句柄可能还没建（首次 `load` 才建），所以先记住，`prepare()` 时补上。
     private var requestedLogLevel: String?
 
+    // MARK: - 起播时间线（`P6-T4`）
+
+    /// 起播计时的时钟与起点。**每次 `load` 都重来** —— 「换文件」也是一次起播。
+    private var startupClock: ContinuousClock?
+    private var startupOrigin: ContinuousClock.Instant?
+    private var startupMarks: [StartupTimeline.Mark] = []
+
     /// 注册表用的**无参**构造（`PlayerKernelProtocol` 要求）—— 等价于**无画面**。
     ///
     /// ⚠️ **不要把这条路径当作"默认构造"**：它给不出画面，`vo` 会落到 `null`。
@@ -116,11 +174,45 @@ public actor MPVKernel: PlayerKernelProtocol {
         )
     }
 
+    /// 最近一次起播的分段时间线（见 `StartupTimeline`）。
+    ///
+    /// ⚠️ 它是**适配器层**的能力，刻意**不**上 `PlayerKernelProtocol`：
+    /// 协议上每加一条，所有内核（含测试里的假内核）都得实现一遍，
+    /// 而"起播分成几段"只对真 mpv 有意义 —— 假内核的耗时是假的，量了也没有意义。
+    /// 需要它的地方（Demo 的装配点）本来就握着具体内核类型。
+    public func startupTimeline() -> StartupTimeline {
+        StartupTimeline(marks: startupMarks)
+    }
+
+    /// 开始一次起播计时（清空上一轮）。
+    private func beginStartupTimeline() {
+        let clock = ContinuousClock()
+        startupClock = clock
+        startupOrigin = clock.now
+        startupMarks = []
+        recordStartupMark(StartupTimeline.Step.loadEntered)
+    }
+
+    /// 打一个点。**同名只记第一次** —— 起播关心的是"第一次到达"，不是"被改了几次"。
+    private func recordStartupMark(_ name: String) {
+        guard let clock = startupClock, let origin = startupOrigin else { return }
+        guard !startupMarks.contains(where: { $0.name == name }) else { return }
+        let elapsed = origin.duration(to: clock.now)
+        // `Duration` 是 (秒, 阿秒二进小数) 的二元组 —— 不能直接 * 1000。
+        let milliseconds = Double(elapsed.components.seconds) * 1000
+            + Double(elapsed.components.attoseconds) / 1_000_000_000_000_000
+        startupMarks.append(StartupTimeline.Mark(name: name, milliseconds: milliseconds))
+    }
+
     public func load(_ resource: PlayerResource) async throws {
+        // 时间线的起点在**进入 load 之前那一刻**：`prepare()` 里建的句柄
+        // （`mpv_create` + `mpv_initialize`）是起播成本的一部分，不能被排除在计时之外。
+        beginStartupTimeline()
         let handle = try prepare(resource)
         lastResource = resource
         emit(.stateChanged(.preparing))
         try send(handle, ["loadfile", resource.url.absoluteString, "replace"])
+        recordStartupMark(StartupTimeline.Step.loadfileSent)
     }
 
     /// 开始播放。
@@ -140,11 +232,15 @@ public actor MPVKernel: PlayerKernelProtocol {
 
         if isPlaylistEmpty(handle) {
             guard let lastResource else { return }
+            // 「停止 → 播放」= 从头再播一次 ⇒ 这**也是一次起播**，时间线同样重来
+            // （否则读到的会是上一次的分段，而"读取者"看不出这个区别 —— 数字都在，只是不是这次的）。
+            beginStartupTimeline()
             // 重载之前先把 `pause` 放开：它是个**全局属性**，`loadfile` 之后会保持原值，
             // 若停止时恰好是暂停态，重载出来的新播放会一动不动。
             setProperty(handle, "pause", "no")
             emit(.stateChanged(.preparing))
             try? send(handle, ["loadfile", lastResource.url.absoluteString, "replace"])
+            recordStartupMark(StartupTimeline.Step.loadfileSent)
             return
         }
 
@@ -268,13 +364,16 @@ public actor MPVKernel: PlayerKernelProtocol {
             emit(.stateChanged(.failed))
             throw MPVKernelError.creationFailed
         }
+        recordStartupMark(StartupTimeline.Step.handleCreated)
         do {
             applyOptions(created, resource)
+            recordStartupMark(StartupTimeline.Step.optionsApplied)
             observeProperties(created)
             let status = mpv_initialize(created)
             guard status >= 0 else {
                 throw MPVKernelError.initializationFailed(code: status)
             }
+            recordStartupMark(StartupTimeline.Step.initialized)
         } catch {
             mpv_terminate_destroy(created)
             emit(.stateChanged(.failed))
@@ -314,7 +413,7 @@ public actor MPVKernel: PlayerKernelProtocol {
         // 自建的 LGPL 产物是**精简构建**（不带 OSC / lua），该选项**根本不存在**。
         // 删掉而不是"允许它失败"：**设一个不存在的选项，除了制造"我配过了"的错觉，
         // 没有任何作用。**
-        applyNetworkOptions(handle)
+        applyNetworkOptions(handle, resource)
         applyRequestHeaders(handle, resource)
     }
 
@@ -344,7 +443,7 @@ public actor MPVKernel: PlayerKernelProtocol {
     /// **不能**用"照文档写的所以肯定对"来替代验证。
     ///
     /// 原则：**让 mpv 吸收网络抖动，而不是让 UI 去处理**。
-    private func applyNetworkOptions(_ handle: OpaquePointer) {
+    private func applyNetworkOptions(_ handle: OpaquePointer, _ resource: PlayerResource) {
         // 显式打开缓存。默认的 `auto` 会按流类型自己决定，对本地文件够用，
         // 但网络流的抖动必须由缓存吸收 —— 否则表现为画面一顿一顿。
         setOption(handle, "cache", "yes")
@@ -363,6 +462,13 @@ public actor MPVKernel: PlayerKernelProtocol {
         setOption(handle, "demuxer-max-back-bytes", "16MiB")
         // 网络超时：太短会在弱网下误判为"流断了"，太长会让"打不开"迟迟不报错。
         setOption(handle, "network-timeout", "30")
+        // 起播：实时投递的源上把 lavf 的**流信息分析窗口**缩短（`P6-T4`）。
+        // 规则与依据见 `StreamProbePlan` —— 一句话：**实时源上这个窗口就是用户等待**。
+        // 只对实时协议生效；HTTP / 本地文件**不动它**（那里窗口不构成等待，
+        // 而它存在的意义是让 lavf 看清流信息）。
+        if let analyzeduration = StreamProbePlan(resource.url).analyzeduration {
+            setOption(handle, "demuxer-lavf-analyzeduration", String(analyzeduration))
+        }
         // ⚠️ `user-agent` 不在这里设 —— 它归 `applyRequestHeaders`（UA 必须**单源**，
         //    否则"写死的默认值"与"资源带的 UA"会互相盖，而谁生效没人说得清）。
     }
@@ -422,6 +528,10 @@ public actor MPVKernel: PlayerKernelProtocol {
         // 视频轨：`vid` 是当前的档位。轨道清单的变化由上面那条 `track-list/count` 一并覆盖
         // （一个属性驱动两条回读路径，见 `applyProperty`）。
         _ = mpv_observe_property(handle, 0, "vid", MPV_FORMAT_INT64)
+        // 视频输出就绪 —— **这一条才是"出画"**（`P6-T4`）。
+        // 为什么必须单独观察它：播放器报 `.playing` 的时刻远早于画面出现，
+        // 而用户等的是画面。少了这个节点，"起播延迟"量的其实是"内核什么时候松口"。
+        _ = mpv_observe_property(handle, 0, "vo-configured", MPV_FORMAT_FLAG)
     }
 
     private nonisolated func installWakeupCallback(_ handle: OpaquePointer, sink: WakeupSink) {
@@ -448,6 +558,7 @@ public actor MPVKernel: PlayerKernelProtocol {
     private func handleEvent(_ event: mpv_event) {
         switch event.event_id {
         case MPV_EVENT_FILE_LOADED:
+            recordStartupMark(StartupTimeline.Step.fileLoaded)
             emit(.stateChanged(.readyToPlay))
             emitPauseState()
             // 换文件会重建轨道清单（内挂字幕就在这一步出现）⇒ 必须回读，
@@ -483,10 +594,19 @@ public actor MPVKernel: PlayerKernelProtocol {
     ///
     /// ⚠️ **先确认"有文件在播"再解读 `pause`**（见 `isPlaylistEmpty`）——
     /// 判据不是"pause 等于什么"，而是"有没有东西可以被 pause"。
+    /// 而且要**两道**：播放列表非空（`isPlaylistEmpty`）**且**当前状态下的 `pause` 算数
+    /// （`pauseDescribesPlayback`，`P6-T4`）。只留前者会漏掉两种情形 ——
+    /// 文件**还没打开**（`.preparing`：`pause` 已是 `no`）与**打开失败之后**（`.failed`：
+    /// mpv 重置 `pause` 为 `no`，而失败的条目还留在播放列表里）。
+    /// 两者都会报出一句"在播"，后者还会把 `.failed` 直接盖掉。
     private func emitPauseState() {
         guard let handle = owner?.pointer else { return }
         guard !isPlaylistEmpty(handle) else {
             logHandler?("[mpv/pause] 跳过：playlist 为空")
+            return
+        }
+        guard state.pauseDescribesPlayback else {
+            logHandler?("[mpv/pause] 跳过：当前状态 \(state) 下 pause 不描述播放")
             return
         }
         var flag: Int32 = 0
@@ -534,8 +654,13 @@ public actor MPVKernel: PlayerKernelProtocol {
             emit(.bufferingChanged(UnsafePointer<Int32>(OpaquePointer(data)).pointee != 0))
         case "pause":
             // 同 `emitPauseState()`：**先确认有文件在播**再解读这条属性。
-            // 没有这一层，"停止后 mpv 把 pause 重置为 no"会被读成"开始播放了"。
-            guard let handle = owner?.pointer, !isPlaylistEmpty(handle) else { return }
+            // 没有这一层，"停止后 mpv 把 pause 重置为 no"会被读成"开始播放了"；
+            // 而 `P6-T4` 又量出两种更坏的情形（文件还没打开 / 已经失败）——
+            // 后者会把 `.failed` 盖成 `.playing`，且**没有任何地方会报错**。
+            guard let handle = owner?.pointer,
+                  !isPlaylistEmpty(handle),
+                  state.pauseDescribesPlayback
+            else { return }
             emit(.stateChanged(UnsafePointer<Int32>(OpaquePointer(data)).pointee != 0 ? .paused : .playing))
         case "audio-params/samplerate":
             let rate = Int(UnsafePointer<Int64>(OpaquePointer(data)).pointee)
@@ -563,6 +688,11 @@ public actor MPVKernel: PlayerKernelProtocol {
             refreshSubtitleState()
         case "vid":
             refreshVideoTrackState()
+        case "vo-configured":
+            // 只在**变真**时打点：VO 会随每次换文件重新配置（真→假→真），
+            // 而"这一次起播什么时候出的画"只关心第一次变真。
+            guard UnsafePointer<Int32>(OpaquePointer(data)).pointee != 0 else { return }
+            recordStartupMark(StartupTimeline.Step.voConfigured)
         case "width":
             let width = Int(UnsafePointer<Int64>(OpaquePointer(data)).pointee)
             if let size = videoSizeTracker.setWidth(width) {
@@ -581,6 +711,12 @@ public actor MPVKernel: PlayerKernelProtocol {
     /// ⚠️ 内核日志**不进事件流**：`PlayerKernelEvent` 是给装配层消费的**契约**，
     /// 往里塞调试文本会污染它（而且 UI 得学会忽略）。日志走独立回调，用完即弃。
     private func emit(_ event: PlayerKernelEvent) {
+        // 起播时间线在这一层打点，顺手就覆盖了**所有**上报 `.playing` 的路径
+        // （`FILE_LOADED` 后的回读、`pause` 属性变化、`play()` 主动回读）——
+        // 在三个调用点各埋一次，漏掉一个就会得到一个"看起来正常"的缺口。
+        if event == .stateChanged(.playing) {
+            recordStartupMark(StartupTimeline.Step.playing)
+        }
         apply(event)
         _ = continuation?.yield(event)
     }
