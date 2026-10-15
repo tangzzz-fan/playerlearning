@@ -583,6 +583,18 @@ struct MPVKernelTests {
     ///
     /// `keep-open=yes` 下 mpv 停在末尾且 `pause=yes`，此时设 `pause=no` 只会在末帧上
     /// 立刻再次 EOF ⇒ 用户按下播放键但画面不动。
+    ///
+    /// ⚠️ **两条断言纪律 —— 这一条用例的第一版两条都没做到，于是放过了真缺陷**：
+    /// ① 播完之后**必须再等一拍**（等 EOF 的那些连带变化到达）。真机上用户是几秒后才点的。
+    /// ② 断言必须写「**时间真的在推进**」，不能写「现在小于某个值」——
+    ///    停在末帧不动的 `currentTime` 同样满足 `currentTime < duration - 0.5`
+    ///    （末帧的时间本来就比片尾小），那种断言对"画面没动"**恒真**。
+    ///
+    /// ⚠️ **还要断言状态轨迹**：真机实测（`-exerciseFinish`）修复前的表现是
+    /// **画面已经在重播、内核只报了 `.playing`** —— 而 `.finished → .playing` 在装配层
+    /// 是**非法迁移**（`docs/03` 记录过：`.finished` 是终态），于是那条上报被如实拒收，
+    /// 界面**永远停在 `finished`**：按钮不换、状态行不改。用户看到的就是「点了没反应」。
+    /// 只断言"时间推进"抓不到它 —— **必须连"报了什么状态"一起断言**。
     @Test
     func testPlayAfterFinishRestartsFromBeginning() async throws {
         let url = try await TestClip.makeURL()
@@ -591,17 +603,33 @@ struct MPVKernelTests {
 
         try await harness.kernel.load(PlayerResource(url: url))
         try await harness.waitFor("播完", timeout: .seconds(25)) { $0 == .stateChanged(.finished) }
+        try await Task.sleep(for: .seconds(1.5))
+        let before = await harness.kernel.snapshot().currentTime
 
         await harness.kernel.play()
 
         let restarted = (try? await waitUntil("应从头重新推进", timeout: .seconds(15)) {
             let snapshot = await harness.kernel.snapshot()
-            return snapshot.state == .playing && snapshot.currentTime < TestClip.duration - 0.5
+            return snapshot.state == .playing && snapshot.currentTime < before - 1
         }) != nil
         let snapshot = await harness.kernel.snapshot()
         #expect(
             restarted,
-            "播完后 play 应从头重播；实测 \(snapshot.state) @ \(snapshot.currentTime) s"
+            "播完后 play 应从头重播；实测 \(snapshot.state) @ \(snapshot.currentTime) s（播完时是 \(before) s）"
+        )
+
+        // 重播必须重新走一遍 `preparing → readyToPlay`：`.finished` 是终态，
+        // 装配层**只接受**这条路径。直接报 `.playing` 会被拒收（真机实测）。
+        //
+        // ⚠️ 断言写成「**最后一个 `.finished` 之后**以 `preparing → readyToPlay` 开头」，
+        // 而不是「最后四个正好是那四个」：mpv 之后会把 `pause` 再报一次，
+        // 于是尾部可能多一个重复的 `.playing`（实测）。
+        // **重复上报不是缺陷，顺序才是** —— 把断言卡在"恰好几个"上会假红。
+        let states = await harness.states()
+        let afterFinish = states.lastIndex(of: .finished).map { Array(states[($0 + 1)...]) } ?? []
+        #expect(
+            afterFinish.starts(with: [.preparing, .readyToPlay]) && afterFinish.contains(.playing),
+            "重播必须重新走一遍 preparing → readyToPlay；实测重播后的状态：\(afterFinish)"
         )
         await harness.shutdown()
     }

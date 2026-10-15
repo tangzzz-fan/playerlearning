@@ -146,10 +146,30 @@ public actor MPVKernel: PlayerKernelProtocol {
             return
         }
 
-        if state == .finished {
-            // 回开头再放开暂停。`seek` 之后 `eof-reached` 会自动回到 false，
-            // 而那条属性只在"变真"时上报，所以这一步不会多报状态。
+        // 停在片尾再点「播放」= **从头再播一次**。
+        //
+        // ⚠️ 判据去问 mpv（`eof-reached`），**不能**看本地 `state`：
+        //    本地那一份是"最后一次上报"的副本，不是权威 —— `P-038` 的判据
+        //    「**问现在是什么，别信本地记的那一份**」在这里同样适用。
+        // 读不到（`nil`）时退回 `state`：不确定不能当成确定（`P-051` 同族）。
+        // 停在片尾再点「播放」= **从头再播一次**。
+        //
+        // ⚠️ 判据去问 mpv（`eof-reached`），**不能**看本地 `state`：
+        //    真机实测：EOF 时 mpv 的两条上报**相隔 9 ms**（`pause=yes` 3.215 / `eof-reached=yes` 3.224），
+        //    **谁先到没有保证**。本地 `state` 只是"最后一次上报"的副本，不是权威 ——
+        //    判据同 `P-038`：**问现在是什么，别信本地记的那一份**。
+        //    读不到（`nil`）时退回 `state`：不确定不能当成确定（`P-051` 同族）。
+        let atEnd = getFlag(handle, "eof-reached") ?? (state == .finished)
+        if atEnd {
+            // `.finished` 是**终态**（`docs/03` 记录过那条"刻意保留的拒绝"），
+            // 所以"再播一次"必须重新走一遍 `preparing` —— **不能**直接报 `.playing`，
+            // 那条边在状态机里是非法迁移（`.finished → .playing`）。
+            // 少了这两步的真机症状：画面已经在重播、内核只报了 `.playing`，
+            // 而装配层**如实拒收**那条非法边 ⇒ 界面永远停在 `finished`
+            // （按钮不换、状态行不改）—— 用户看到的就是「点了没反应」（`-exerciseFinish` 实测）。
+            emit(.stateChanged(.preparing))
             try? send(handle, ["seek", "0", "absolute+exact"])
+            emit(.stateChanged(.readyToPlay))
         }
         setProperty(handle, "pause", "no")
         // 命令之后**主动回读**，不坐等"变化"通知：同值不通知（`P-038` 同源）。
