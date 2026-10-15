@@ -1547,6 +1547,43 @@ paths:
 
 ---
 
+## P-062 · 服务端的 `Broken pipe` 在流媒体里通常是**"客户端主动断开"**，不是故障
+
+**现象**：用 `Tools/serve-range.py` 发 HLS 时，服务端刷出一整段 traceback：
+
+```
+Exception occurred during processing of request from ('127.0.0.1', 5xxxx)
+Traceback (most recent call last):
+  File "…/socketserver.py", line …, in _handle_request_noblock
+  …
+BrokenPipeError: [Errno 32] Broken pipe
+```
+
+看起来像服务端写崩了 —— 而同一时刻**客户端其实正常播着**。
+
+**真因**：HLS 客户端（mpv / lavf）会**预读若干个分片**，解析出自己需要的部分后
+就**丢掉不再用的连接**（`seek` / 换清晰度更会**整批重来**）。此时服务端还在 paced 写 ⇒ `EPIPE`。
+
+**判据**：
+- **"客户端提前断开"是流媒体的常态**，不是故障 —— 它和"服务端写不出去"（磁盘满 / 权限）
+  是**两种病**，而症状都是 `EPIPE`；
+- 要判"是不是故障"，**看客户端有没有拿到它要的东西**（片子在不在播），
+  而不是看服务端有没有报错。
+
+**处置**：覆写 handler 的 `handle_one_request` **和** `finish`，捕获
+`BrokenPipeError` / `ConnectionResetError`，降级成一行
+`[net] 客户端提前断开：GET /… —— 正常（播放器预读后丢弃连接），非故障`。
+⚠️ `finish()` **必须一起覆写** —— 收尾的 `flush` 同样会撞上已断的连接，只覆写前者会漏出去。
+
+**为什么必须修，而不是"忍一下"**：**噪音会把真错误埋掉**（同 `P-058` 的形态 ——
+取证通道自己先吵起来，然后你就不再看它了）。
+
+⚠️ **复现要发 `RST`**：普通 `close()` 只发 `FIN`（半关闭），服务器**仍可以写**，测不出 `EPIPE`。
+需要先 `SO_LINGER = (1, 0)` 再 `close()`。本次验证：`--throttle 3000`，
+客户端读 200 字节后断开 ⇒ 修复前整段 traceback / 修复后 5 行 `[net]`、零 traceback。
+
+---
+
 > ### 与既有条目同源、故不重复展开的（仅登记映射，便于日后合并检索）
 >
 > | 其他项目的条目 | 本项目已有 |

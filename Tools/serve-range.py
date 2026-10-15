@@ -64,6 +64,43 @@ class RangeHandler(BaseHTTPRequestHandler):
     stall_for = 0.0
     stall_done = False
 
+    # ⚠️ **把"客户端主动断开"从"服务端故障"里分出来。**
+    #
+    # HLS 场景下这几乎是**常态**：mpv/lavf 会**预读若干个分片**、解析出自己需要的部分后就
+    # 丢掉不再用的连接（`seek` / 换清晰度更会整批重来）。此时服务端还在 paced 写 ⇒ `EPIPE`。
+    # 它**不是故障**，但 `socketserver` 默认会为它打**一整段 traceback**
+    # （`Exception occurred during processing of request from …` + 堆栈）。
+    #
+    # ⇒ 噪音一多，**真**错误就被埋了 —— 同 `P-058` 的形态：取证通道自己先吵起来。
+    # 判据：**"客户端提前断开"是流媒体的常态**；要判"是不是故障"，看**客户端有没有拿到它要的东西**，
+    # 而不是看服务端有没有报错。
+    _logged_client_gone = False
+
+    def handle_one_request(self) -> None:  # noqa: N802  (父类的命名约定)
+        try:
+            super().handle_one_request()
+        except (BrokenPipeError, ConnectionResetError):
+            self._note_client_gone()
+
+    def finish(self) -> None:
+        # 收尾时 `flush` 也会撞上已经断掉的连接，同样降级（不覆写就会漏出去变成 traceback）。
+        try:
+            super().finish()
+        except (BrokenPipeError, ConnectionResetError):
+            self._note_client_gone()
+
+    def _note_client_gone(self) -> None:
+        self.close_connection = True
+        if self._logged_client_gone:
+            return
+        self._logged_client_gone = True
+        command = getattr(self, "command", None) or "-"
+        path = getattr(self, "path", None) or "-"
+        sys.stderr.write(
+            f"[net] 客户端提前断开：{command} {path} —— 正常（播放器预读后丢弃连接），非故障\n"
+        )
+        sys.stderr.flush()
+
     def do_HEAD(self) -> None:  # noqa: N802  (BaseHTTPRequestHandler 的命名约定)
         self._respond(body=False)
 
