@@ -218,17 +218,31 @@ final class PlayerDemoModel {
             Self.writeToStderr("[tracks] 没有别的档位可切，结束")
             return
         }
+        // ⚠️ **切档前后的音频解码采样率必须都打**：三档的音频是各自独立的轨，
+        //    "切 vid 会不会顺手带走 aid"这件事只能靠它判（见 docs/14 §四 遗留 1）。
+        //    造源时特意把三档做成不同采样率（48000/44100/32000）⇒ 变化与否是**决定性**证据。
+        Self.writeToStderr("[tracks] 切档前音频：\(Self.audioSummary(player))")
         Self.writeToStderr("[tracks] 切到 id=\(target.id) \(target.label)")
         await player.selectVideoTrack(id: target.id)
         try? await Task.sleep(for: .seconds(3))
+        Self.writeToStderr("[tracks] 切档后音频：\(Self.audioSummary(player))")
         Self.writeToStderr("[tracks] 切档 3 秒后 → \(Self.snapshot(player))")
-        // 如实划清这条取证能证到哪 —— 免得日志被读成"音轨也验过了"。
-        Self.writeToStderr("[tracks] ⚠️ 本入口只证「档位清单 + vid 切换 + 回读」；"
-            + "「切档是否带动音轨」需人耳判断（docs/14 §四 遗留 1）")
     }
 
     private var exerciseTracks: Bool {
         ProcessInfo.processInfo.arguments.contains("-exerciseTracks")
+    }
+
+    /// 当前档位的**像素**与**音频解码端采样率**，用于"切清晰度会不会带动音轨"这一格。
+    ///
+    /// 为什么把**解码端**采样率也报出来：`-traceUpdates` 能给出相同信息，
+    /// 但它同时打开 mpv 的 verbose 日志，会把 `devicectl --console` 打爆（`P-058`，
+    /// 实测日志第 2 秒就断）。而"音轨有没有跟着切"恰恰需要一个**能持续读**的通道 ——
+    /// 所以把它并进每秒一条的 `[status]` 行。
+    private static func audioSummary(_ player: PlayerViewModel) -> String {
+        let decode = player.audio.isDecoding ? "解码 \(player.audio.decoderSampleRate) Hz" : "无解码"
+        let output = player.audio.isOutputting ? "输出 \(player.audio.outputSampleRate) Hz" : "无输出"
+        return "\(decode) / \(output)"
     }
 
     func teardown() async {
@@ -270,6 +284,7 @@ final class PlayerDemoModel {
         let progress = String(format: "%.3f", player.progress)
         var line = "state=\(player.state) t=\(time) progress=\(progress) buffering=\(player.isBuffering)"
             + " canPlay=\(player.canPlay) canStop=\(player.canStop)"
+            + " · \(Self.audioSummary(player))"
         // 清晰度只在**真的有多档**时才上这一行：单码率下它与前面的「画面 W×H」是同一件事，
         // 写两遍只会让状态行更长得更难读（与状态行的显示规则保持一致）。
         if player.videoTracks.hasAlternatives {
