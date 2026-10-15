@@ -182,6 +182,13 @@ xcrun devicectl device process launch --device <真机 UDID> --console \
 #      不验这一条，落后量里就混进了推流端偏差 —— 而它看起来完全正常。
 #   基线（2026-10-16 · 真机 iPhone 16 Pro）：起播 2063 ms · 落后量 ≈ 9000 ms（±50 ms，恒定）
 #   「恒定」是判据：不是漂移 ⇒ 是**缓存深度** ⇒ 去看 `cache-secs`（产品没设 ⇒ mpv 默认 10 s）。
+#   ⚠️ **要归因到产品，必须切成三段**（否则会把造源侧的缓冲当成产品缺陷，`P-052`）：
+#       服务端段 = push.out_time − pull.out_time   ← 宿主原生 ffmpeg 也拉一路（**绕开产品**）
+#       产品段   = pull.out_time − play.t          ← 只属于我们的播放器
+#       ⚠️ pull 与 play **必须同一时刻启动**（错开 6 秒量出来的差不可比，`P-068`）。
+#   实测结论（`docs/16`）：服务端段 ≈4.4 s（**原生客户端同样落后 ⇒ 不在产品里**）；
+#     产品段：默认 4463 ms → `cache-secs=1` 2579 → ＋`cache-pause-initial=no` **1559 ms**（−65%）。
+#     代价：弱网下 buffering 翻转 0.148 → 0.30 次/s（约 2 倍），而 `G5` 三条判据仍成立。
 
 # ⑦ 真机（⚠️ 两套 Xcode 环境、两个 team ⇒ 构建时**命令行覆盖**，不改仓库）
 #   环境 A · 家里：team UKXWZ3FS84 · 真机 Tango / iPhone 16 Pro

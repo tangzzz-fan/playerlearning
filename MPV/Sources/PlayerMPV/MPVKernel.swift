@@ -348,8 +348,14 @@ public actor MPVKernel: PlayerKernelProtocol {
         // 显式打开缓存。默认的 `auto` 会按流类型自己决定，对本地文件够用，
         // 但网络流的抖动必须由缓存吸收 —— 否则表现为画面一顿一顿。
         setOption(handle, "cache", "yes")
-        // 起播前先攒够再开始：网络流最糟的第一印象就是"点开先卡三秒"。
-        setOption(handle, "cache-pause-initial", "yes")
+        // ⚠️ **`cache-secs` 必须显式给**（`P6-T3`）：mpv 对流默认 **10 秒**，
+        //    而它就是**产品侧**直播落后量的来源。真机实测（同一时基、三段切分）：
+        //    默认 10 s ⇒ 产品段 4463 ms；设 1 s ⇒ 2579 ms。判据与数据见 `docs/16`。
+        setOption(handle, "cache-secs", "1")
+        // ⚠️ **起播不再等攒够**（`P6-T3`）：原来的 `yes` 会让起播先等缓存填到
+        //    `cache-pause-wait`，而那段等待在**直播**下会永久留在落后量里
+        //    （实测：产品段 2579 → 1559 ms）。代价是弱网下更早开始缓冲 —— 已量化（`docs/16` §4）。
+        setOption(handle, "cache-pause-initial", "no")
         setOption(handle, "cache-pause-wait", "3")
         // 前向 / 后向缓冲上限（字节）。**给上限是为了不让网络流把内存吃光** ——
         // 没有上限时，一个长片的缓存可以轻易吃掉几百 MB。
