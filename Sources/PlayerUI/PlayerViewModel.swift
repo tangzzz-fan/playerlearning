@@ -141,6 +141,46 @@ public final class PlayerViewModel {
         fullscreen.toggle()
     }
 
+    /// 全屏**置位**（幂等）。给快捷键的「退出全屏」用 ——
+    /// 那个命令表达的是"要回到非全屏"，而不是"翻一下"（连按两次不该又进全屏）。
+    public func setFullscreen(_ value: Bool) {
+        guard fullscreen.isFullscreen != value else { return }
+        fullscreen.setFullscreen(value)
+    }
+
+    /// 快捷键的**唯一副作用入口** —— 界面层只负责"把按键翻成命令"，判断全在这里。
+    ///
+    /// 为什么不把副作用写在 View 里：这些命令里有几条**不是无脑转发**
+    /// （退出全屏只该在按的时候生效、跳转要基于当前时间算目标），
+    /// 而 View 是**测不到**的（本项目已按董事长决定移除 UI 自动化）。
+    ///
+    /// ## 两类命令，界线是"它需不需要内核"
+    /// - **需要内核的**（播放/暂停 · 停止 · 跳转）：判据**与按钮完全共用**
+    ///   （`canPlay` / `canStop` / `canSkip`）—— 按钮灰着的时候，对应的快捷键也不该有反应，
+    ///   否则"键盘能用、按钮不能用"会让人以为界面坏了。
+    /// - **纯界面的**（全屏 / 退出全屏）：**任何时候都响应** —— 它跟有没有视频无关，
+    ///   而"按了 F 没反应"比"没得看"更让人困惑。
+    public func handleShortcut(_ command: PlayerShortcutCommand) async {
+        switch command {
+        case .toggleFullscreen:
+            fullscreen.toggle()
+        case .exitFullscreen:
+            setFullscreen(false)
+        case .togglePlayPause:
+            guard canPlay else { return }
+            await togglePlayPause()
+        case .stop:
+            guard canStop else { return }
+            await stop()
+        case .skipBackward:
+            guard canSkip else { return }
+            await skip(by: -PlayerShortcuts.skipStep)
+        case .skipForward:
+            guard canSkip else { return }
+            await skip(by: PlayerShortcuts.skipStep)
+        }
+    }
+
     /// 点画面：显示 ↔ 隐藏控制层。
     public func toggleChrome() {
         chrome.toggle()

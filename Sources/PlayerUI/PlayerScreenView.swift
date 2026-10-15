@@ -56,6 +56,15 @@ public struct PlayerScreenView: View {
         .background(.black)
         // 全屏时连安全区一起接管（否则刘海两侧会留黑边，看起来"没全"）。
         .ignoresSafeArea(edges: model.fullscreen.hidesHostChrome ? .all : [])
+        // 键盘控制。挂在**根视图**上而不是控制条的按钮上 —— 理由见 `PlayerKeyboardShortcuts`。
+        .modifier(
+            PlayerKeyboardShortcuts(
+                isFullscreen: model.fullscreen.isFullscreen,
+                onCommand: { command in Task { await model.handleShortcut(command) } }
+            )
+        )
+        // 把"要不要全屏"落到宿主：macOS 是窗口，iOS 是状态栏（平台差异收在那一处文件里）。
+        .modifier(PlayerHostFullscreen(isFullscreen: model.fullscreen.isFullscreen))
         .task {
             await model.start()
             scheduleAutoHide()

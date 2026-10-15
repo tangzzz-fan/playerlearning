@@ -10,5 +10,11 @@ struct PlayerStackDemoApp: App {
                 MPVDemoView()
             }
         }
+        #if os(macOS)
+        // 平台差异：macOS 的 `WindowGroup` 不给尺寸时会开一个很小的默认窗口，
+        // 播放器在小窗口里缩成一团（且 `PlayerScreenView` 是按宽高比铺满的 ⇒ 越小越看不出画质）。
+        // iOS 上窗口尺寸由系统决定，这个修饰符没有意义。
+        .defaultSize(width: 960, height: 600)
+        #endif
     }
 }
