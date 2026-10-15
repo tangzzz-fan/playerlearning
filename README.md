@@ -2,7 +2,10 @@
 
 做一个**自己的 iOS 优先 / macOS 跟进播放器**：libmpv 单内核，本地文件 + 网络点播 + 直播全都要，能播系统播放器播不了的格式（mkv / ASS 特效字幕 / 各种编码）。
 
-**当前状态**：**Phase 0–5 均已完成** · **Phase 7（macOS）`P7-T1` 完成**（`G7` 达成：根包 214 tests macOS 全绿 + Demo macOS target 构建成功）；**`G5` 未判定**（缺可控弱网环境）。真机已跑通 —— 两套环境各一台：家里 iPhone 16 Pro（`UKXWZ3FS84`）· 本机 Tang的iPhone（`3GMJYX32U9`），口径见 §⑦。
+**当前状态**：**Phase 0–5 均已交付** · **Phase 7（macOS）`P7-T1` 完成**（`G7` 达成：根包 214 tests macOS 全绿 + Demo macOS target 构建成功）。
+**`G5` 三项已判定**（真机**可控弱网**：不崩 / 有缓冲提示 / 恢复后自动继续 —— [`docs/12`](docs/12-P5验证报告.md)）；
+⚠️ §二 口径里的「可切清晰度」**未覆盖**（需 HLS 多码率源），故 **`Phase 5` 不宣告关闭**。
+真机已跑通 —— 两套环境各一台：家里 iPhone 16 Pro（`UKXWZ3FS84`）· 本机 Tang的iPhone（`3GMJYX32U9`），口径见 §⑦。
 
 | 里程碑 | 状态 |
 | --- | --- |
@@ -89,6 +92,19 @@ xcrun simctl launch --console <udid> com.playerstack.demo \
   -headers "X-Player-Test: yes,User-Agent: CustomUA/2.0" -traceUpdates
 #   查服务器日志（stderr）看到 `X-Player-Test: yes` 与 `User-Agent: CustomUA/2.0` ⇒ 注入生效
 #   格式：`Key: Value`（逗号分隔多个头），刻意与 mpv 的 `http-header-fields` 一致
+
+# ⑥c **真机弱网判定**（`G5`：不崩 / 有缓冲提示 / 恢复后自动继续）—— 见 docs/12
+#   ⚠️ 真机不能用 127.0.0.1：手机在另一台设备上 ⇒ 服务器要绑 0.0.0.0，URL 用宿主的局域网地址。
+#   ⚠️ 也不要加 -traceUpdates：mpv 的 verbose 日志会把 devicectl --console 打爆，
+#      日志**在第 2 秒就断流**，看起来像"播不动"（`P-058`）。判定用每秒一条的 `[status]`。
+MACIP=$(ipconfig getifaddr en1 || ipconfig getifaddr en0)          # 本机局域网地址
+python3 Tools/serve-range.py --port 8765 --root /tmp/vidprobe2 --host 0.0.0.0 --throttle 45000
+xcrun devicectl device process launch --device <真机 UDID> --console \
+  --terminate-existing com.playerstack.demo -- -directURL http://$MACIP:8765/sintel_trailer-720p.mp4
+#   ⇒ 每秒一行：`[status] … state=playing t=…/… progress=… buffering=true|false …`
+#   判据：state 始终 playing（不崩）· buffering 反复翻转（有提示）· t 在停住之后自行推进（自动继续）
+#   参考值：720p 实时需 ≈146 KB/s；限到 45 000 B/s ⇒ 供给只有需求 1/3，缓存必然反复耗尽。
+#   `--stall-at/--stall-for` 可造"挂住 N 秒再继续"（更长断网的恢复能力，尚未测）。
 
 # ⑦ 真机（⚠️ 两套 Xcode 环境、两个 team ⇒ 构建时**命令行覆盖**，不改仓库）
 #   环境 A · 家里：team UKXWZ3FS84 · 真机 Tango / iPhone 16 Pro
@@ -187,18 +203,20 @@ playerlearning/
 | 2 内核接入 | `G2` / `M2` | ✅ 出画 + 出声 + `seek` 精确 + 播完报 `.finished`（[`docs/10`](docs/10-P2验证报告.md)） |
 | 3 UI 最小闭环 | `G3` | ✅ 播放/暂停 · 时间 · 进度条+拖拽 · 全屏 · 字幕开关 · 文件选择（[`docs/11`](docs/11-P3验证报告.md)） |
 | 4 字幕 | `G4` | ✅ SRT 中文不乱码 · ASS 能加载渲染 · 字幕延迟可调（[`docs/03`](docs/03-路线图.md) 的 📌） |
-| 5 网络点播 | `G5` | ◑ `P5-T1`/`P5-T2` 完成（真机直连 http → playing）· `G5` 未判定（缺可控弱网） |
+| 5 网络点播 | `G5` | ◑ `P5-T1`–`T4` 完成 · **`G5` 三项达成**（真机可控弱网：不崩 / 有缓冲提示 / 恢复后自动继续，见 [`docs/12`](docs/12-P5验证报告.md)）· ⚠️ §二 的「可切清晰度」**未覆盖**（需 HLS 多码率源） |
 | 6 直播 | `G6` | ⬜ 未定（见 `docs/03` §5） |
-| 7 macOS | `G7` | ⬜ 未开始 |
+| 7 macOS | `G7` | ✅ `P7-T1` 完成 · `G7` 达成（根包 214 tests macOS 全绿 + Demo macOS target 构建成功） |
 
 ## 下一步
 
-**先还 `M3` 的欠账**（不做新功能）：
+**`M3` 只剩一项**（只能肉眼手测）：
 
-1. **真机校准** —— 音轨使模拟器首屏 60 ms → 1.97 s，**模拟器的数字不可信**；真机上量一遍再说要不要优化。
-2. **手动长跑 30 min** —— 看内存是否增长、音频输出是否掉线（`G2` 只跑过 5 秒）。
-3. **字幕菜单在真机上手势可用性** —— 菜单项多时是否可滚动、延迟按钮是否够大。
+1. ~~真机校准~~ —— ✅ 已做：真机出声出画 ≈0.20 s；模拟器那个 1.97 s **未复现**（是 MoltenVK 管线编译的代价，与音轨无关）。
+2. ~~手动长跑 30 min~~ —— ❌ **已取消**（2026-10-15 董事长拍板，不做任何长时任务）；已跑的 ≈3 min / 18 轮如实保留。
+3. **字幕菜单在真机上手势可用性** —— 菜单项多时是否可滚动、延迟按钮是否够大。**就剩这一项**。
 
-之后进 **Phase 5 · 网络点播**。
+`Phase 5` 的收尾不是"再做票"，而是**一条覆盖问题**：`G5` 的「可切清晰度」口径需要一个
+**HLS 多码率源**才能验（`docs/03` §二 与 §三 对 `G5` 的表述不一致，已如实记录）。
+之后进 **Phase 6 · 直播**，但它的**进入条件是 `P6-T0` 调研先给结论**（见 `docs/03`）。
 
 > **范围锚点是 M3（"能顺手用"）**：任何不推进 M3 的需求都往后排。
