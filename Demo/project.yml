@@ -38,7 +38,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.playerstack.demo
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "6.0"
-        DEVELOPMENT_TEAM: 3GMJYX32U9
+        DEVELOPMENT_TEAM: UKXWZ3FS84
         CODE_SIGN_STYLE: Automatic
         ENABLE_USER_SCRIPT_SANDBOXING: NO
 schemes:

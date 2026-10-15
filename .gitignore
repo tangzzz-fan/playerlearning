@@ -13,6 +13,7 @@ __pycache__/
 Demo/*.xcodeproj/
 Demo/Info.plist
 Demo/DD/
+Demo/DD-*/
 
 MPV/Library/*.xcframework/
 MPV/.build/

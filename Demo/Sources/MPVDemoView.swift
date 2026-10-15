@@ -55,6 +55,8 @@ final class PlayerDemoModel {
             await soakTest(rounds: rounds)
         } else if ProcessInfo.processInfo.arguments.contains("-exerciseControls") {
             await exerciseControls()
+        } else if ProcessInfo.processInfo.arguments.contains("-exerciseFinish") {
+            await exerciseFinish()
         } else if let direct = directURL, let url = URL(string: direct) {
             await loadDirect(url)
         } else if ProcessInfo.processInfo.arguments.contains("-autoLoadSample") {
@@ -151,6 +153,40 @@ final class PlayerDemoModel {
         memory?.cancel()
         memory = nil
         await player.teardown()
+    }
+
+    /// `-exerciseFinish`：**播到结尾之后再点「播放」**，走与按钮**完全相同**的 action。
+    ///
+    /// 为什么单开一条入口：`-exerciseControls` 覆盖的是「停止 → 再播」，那条路径 mpv 的
+    /// 播放列表**为空**（`stop` 清空了它）⇒ 走"重新 `loadfile`"。而真机上最刺眼的是
+    /// 「**播完** → 再播」—— 它停在末帧（`keep-open`），播放列表**没空**，是另一条路径。
+    /// 两条路径的症状都是"点了没反应"，成因却完全不同。
+    ///
+    /// ⚠️ 它证明的仍然只是**按钮按下之后**那段；"手指有没有点到按钮上"依旧只能肉眼确认。
+    private func exerciseFinish() async {
+        await loadSample()
+        await player.play()
+        try? await Task.sleep(for: .seconds(1))
+        // 直接跳到片尾前 2 秒再播到头：等整片（52 s）跑完太浪费，而"停在末帧"这个终局一样。
+        await player.seek(to: max(0, player.duration - 2))
+        try? await Task.sleep(for: .seconds(5))
+        Self.writeToStderr("[finish] 播到末尾 → \(Self.snapshot(player))")
+
+        // ⚠️ 这一拍是关键：真机上用户是**过一会儿**才点的，而"刚播完立刻点"是另一条时序。
+        try? await Task.sleep(for: .seconds(2))
+        Self.writeToStderr("[finish] 等 2 秒后 → \(Self.snapshot(player))")
+
+        await player.play()
+        try? await Task.sleep(for: .seconds(3))
+        Self.writeToStderr("[finish] 点播放 3 秒后 → \(Self.snapshot(player))")
+    }
+
+    /// 打印"用户看得见的那几项"：状态 / 位置 / 时长 / 进度 / 按钮可用性。
+    /// 进度条走不满、时间停在末帧前一格 —— 这些都能从这一行直接读出来。
+    private static func snapshot(_ player: PlayerViewModel) -> String {
+        let time = String(format: "%.2f/%.2f", player.currentTime, player.duration)
+        let progress = String(format: "%.3f", player.progress)
+        return "state=\(player.state) t=\(time) progress=\(progress) canPlay=\(player.canPlay) canStop=\(player.canStop)"
     }
 
     /// `-sampleURL <url>` 可覆盖样例来源（排查用；也给"换一个真实素材复验"留了口子）。
