@@ -24,6 +24,11 @@ mp4 的索引（moov）需要**回退读取**；线性流不能后退 ⇒ 立即
     xcrun simctl launch --console <udid> com.playerstack.demo \\
       -directURL http://127.0.0.1:8765/sintel_trailer-720p.mp4 -traceUpdates
 
+    # **真机**（手机在另一台设备上，回环到不了它 ⇒ 必须绑 0.0.0.0 + 用宿主机的局域网地址）：
+    python3 Tools/serve-range.py --port 8765 --root /tmp/vidprobe2 --host 0.0.0.0 --throttle 400000
+    xcrun devicectl device process launch --device <真机 UDID> --console \\
+      --terminate-existing com.playerstack.demo -- -directURL http://192.168.x.x:8765/… -traceUpdates
+
 ## 三个"造环境"开关（验证用，产品代码不受影响）
 
 | 开关 | 用途 |
@@ -159,6 +164,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="支持 Range 的静态服务器（点播 / 弱网验证用）")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--root", default=".")
+    # ⚠️ 默认只听回环（模拟器用 `127.0.0.1` 就够）。**真机必须 `--host 0.0.0.0`**：
+    #    手机在另一台设备上，回环地址到不了它 —— 而"真机弱网"正是 `G5` 唯一能落到实处的形态。
+    parser.add_argument("--host", default="127.0.0.1", help="绑定地址（真机验证用 0.0.0.0）")
     parser.add_argument("--echo-headers", action="store_true", help="把请求头打到 stderr（验请求头注入）")
     parser.add_argument("--throttle", type=int, default=0, help="限速，单位 字节/秒（0 = 不限）")
     parser.add_argument("--stall-at", type=int, default=0, help="在这个文件偏移处挂住（0 = 不挂）")
@@ -170,9 +178,9 @@ def main() -> int:
     RangeHandler.throttle = options.throttle
     RangeHandler.stall_at = options.stall_at
     RangeHandler.stall_for = options.stall_for
-    server = ThreadingHTTPServer(("127.0.0.1", options.port), RangeHandler)
+    server = ThreadingHTTPServer((options.host, options.port), RangeHandler)
     sys.stderr.write(
-        f"[range] serving {RangeHandler.root} on http://127.0.0.1:{options.port}"
+        f"[range] serving {RangeHandler.root} on http://{options.host}:{options.port}"
         f" · throttle={options.throttle} B/s · stall@{options.stall_at} for {options.stall_for}s"
         f" · echo_headers={options.echo_headers}\n"
     )

@@ -50,7 +50,11 @@ final class PlayerDemoModel {
 
     func start() async {
         await player.start()
-        if traces || soakRounds != nil {
+        // ⚠️ `directURL` 也要采样：网络点播的判定（`G5`：弱网下不崩 / 有缓冲提示 / 恢复后继续）
+        //    只能靠**低频状态行**取证。`-traceUpdates` 会同时打开 mpv 的 **verbose** 日志，
+        //    那点量会把 `devicectl --console` 的桥打爆 —— 实测日志**在第 2 秒就断了**，
+        //    看起来像"播不动"，其实是**取证工具先于被测对象挂了**。
+        if traces || soakRounds != nil || directURL != nil {
             startMemorySampling()
         }
         if traces {
@@ -215,12 +219,13 @@ final class PlayerDemoModel {
         Self.writeToStderr("[finish] 点播放 3 秒后 → \(Self.snapshot(player))")
     }
 
-    /// 打印"用户看得见的那几项"：状态 / 位置 / 时长 / 进度 / 按钮可用性。
-    /// 进度条走不满、时间停在末帧前一格 —— 这些都能从这一行直接读出来。
+    /// 打印"用户看得见的那几项"：状态 / 位置 / 时长 / 进度 / 缓冲 / 按钮可用性。
+    /// 进度条走不满、时间停在末帧前一格、弱网下有没有缓冲提示 —— 都能从这一行直接读出来。
     private static func snapshot(_ player: PlayerViewModel) -> String {
         let time = String(format: "%.2f/%.2f", player.currentTime, player.duration)
         let progress = String(format: "%.3f", player.progress)
-        return "state=\(player.state) t=\(time) progress=\(progress) canPlay=\(player.canPlay) canStop=\(player.canStop)"
+        return "state=\(player.state) t=\(time) progress=\(progress) buffering=\(player.isBuffering)"
+            + " canPlay=\(player.canPlay) canStop=\(player.canStop)"
     }
 
     /// `-sampleURL <url>` 可覆盖样例来源（排查用；也给"换一个真实素材复验"留了口子）。
@@ -255,9 +260,10 @@ final class PlayerDemoModel {
     private func startMemorySampling() {
         memory = Task { [origin] in
             while !Task.isCancelled {
-                if let footprint = MemoryFootprint.megabytes() {
-                    Self.writeToStderr("[mem] \(Self.stamp(at: origin)) \(String(format: "%.1f", footprint)) MB")
-                }
+                let footprint = MemoryFootprint.megabytes().map { String(format: "%.1f", $0) } ?? "?"
+                Self.writeToStderr("[mem] \(Self.stamp(at: origin)) \(footprint) MB")
+                // 每秒一行"用户看得见的状态"：弱网点播的判定全靠它（见 `start()` 的说明）。
+                Self.writeToStderr("[status] \(Self.stamp(at: origin)) \(Self.snapshot(player))")
                 try? await Task.sleep(for: .seconds(1))
             }
         }
