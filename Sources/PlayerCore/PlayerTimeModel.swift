@@ -37,6 +37,21 @@ public struct PlayerTimeModel: Sendable {
         return Swift.min(lowerBounded, duration)
     }
 
+    /// 播完时把位置**对齐到片尾**。返回 `nil` = 不需要对齐（未知时长 / 已经在片尾）。
+    ///
+    /// 为什么需要它（真机实测）：`time-pos` 到 EOF 就**不再更新**，
+    /// 内核最后上报的是**末帧的时间戳** —— 52.208 秒的片子停在 51.9。
+    /// 于是进度条永远差一截（走不满）、时间显示停在「04/05」。
+    ///
+    /// 为什么不放在内核里：内核只负责**转述 mpv 报了什么**；
+    /// 「结束就意味着位置等于时长」是**播放语义**，属于装配层（与 `seek` 钳制同一条原则）。
+    @discardableResult
+    public mutating func snapToEnd() -> PlayerTimeUpdate? {
+        guard duration > 0, currentTime < duration else { return nil }
+        currentTime = duration
+        return publish()
+    }
+
     public func updates(from events: AsyncStream<PlayerKernelEvent>) -> AsyncStream<PlayerTimeUpdate> {
         AsyncStream { continuation in
             let task = Task {

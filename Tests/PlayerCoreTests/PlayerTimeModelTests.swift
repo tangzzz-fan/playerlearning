@@ -261,4 +261,32 @@ struct PlayerTimeModelTests {
 
         #expect(model.clampSeekTarget(-.infinity) == 0)
     }
+
+    @Test
+    func testSnapToEndMovesPositionToDuration() {
+        var model = PlayerTimeModel(duration: 52.208)
+        _ = model.apply(.currentTimeChanged(51.9))
+
+        let update = model.snapToEnd()
+
+        #expect(update == PlayerTimeUpdate(currentTime: 52.208, duration: 52.208))
+        #expect(model.currentTime == 52.208)
+    }
+
+    @Test
+    func testSnapToEndIsNoOpWhenDurationUnknown() {
+        var model = PlayerTimeModel(duration: 0)
+        _ = model.apply(.currentTimeChanged(3))
+
+        #expect(model.snapToEnd() == nil)
+        #expect(model.currentTime == 3)
+    }
+
+    @Test
+    func testSnapToEndIsNoOpWhenAlreadyAtEnd() {
+        var model = PlayerTimeModel(duration: 10)
+        _ = model.apply(.currentTimeChanged(10))
+
+        #expect(model.snapToEnd() == nil)
+    }
 }

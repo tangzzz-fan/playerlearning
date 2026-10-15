@@ -370,4 +370,37 @@ struct PlayerControllerTests {
         let secondEnded = await second.next()
         #expect(secondEnded == nil)
     }
+
+    /// 播完时位置必须被推到片尾。
+    ///
+    /// 为什么是装配层的责任：`time-pos` 到 EOF 就**不再更新**，内核最后报来的是
+    /// **末帧的时间戳**（例：52.208 秒的片子停在 51.9）。少这一步的后果很具体 ——
+    /// 进度条永远差一截、时间显示停在「04/05」（真机实测）。
+    /// 这条**不能**靠内核补报：内核只转述 mpv 报了什么都行，「结束就是片尾」是装配语义。
+    @Test
+    func testFinishingSnapsPositionToDuration() async throws {
+        var fixture = await makeFixture(duration: 52.208)
+
+        try await fixture.controller.load(fixture.resource)
+        await fixture.kernel.emit(.stateChanged(.playing))
+        await fixture.kernel.emit(.currentTimeChanged(51.9))
+        await fixture.kernel.emit(.stateChanged(.finished))
+
+        let updates = await fixture.updates()
+
+        #expect(
+            updates == [
+                .stateChanged(.preparing),
+                .stateChanged(.readyToPlay),
+                .timeChanged(PlayerTimeUpdate(currentTime: 0, duration: 52.208)),
+                .stateChanged(.playing),
+                .timeChanged(PlayerTimeUpdate(currentTime: 51.9, duration: 52.208)),
+                .stateChanged(.finished),
+                .timeChanged(PlayerTimeUpdate(currentTime: 52.208, duration: 52.208)),
+            ],
+            "播完时位置应被推到片尾，否则进度条走不满、时间停在末帧前一格"
+        )
+        let snapshot = await fixture.controller.snapshot()
+        #expect(snapshot.currentTime == 52.208)
+    }
 }

@@ -129,6 +129,11 @@ public actor PlayerController {
         case .stateChanged(let newState):
             guard machine.transition(to: newState) == .applied else { return }
             continuation?.yield(.stateChanged(newState))
+            // 播完 ⇒ 把位置推到片尾。`time-pos` 到 EOF 就不再更新，最后报来的是**末帧的时间戳**，
+            // 少这一步进度条走不满、时间停在「04/05」（真机实测）。
+            if newState == .finished, let update = time.snapToEnd() {
+                continuation?.yield(.timeChanged(update))
+            }
         case .currentTimeChanged, .durationChanged:
             guard let update = time.apply(event) else { return }
             continuation?.yield(.timeChanged(update))
