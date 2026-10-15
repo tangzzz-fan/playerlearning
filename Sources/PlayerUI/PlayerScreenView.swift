@@ -124,22 +124,33 @@ public struct PlayerScreenView: View {
     }
 
     private var statusLine: some View {
-        Text(statusText)
-            .font(.caption.monospaced())
-            .foregroundStyle(.white.opacity(0.75))
-            .lineLimit(2)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.top, 10)
-            .padding(.bottom, 6)
-            .background(
-                LinearGradient(
-                    colors: [.black.opacity(0.55), .clear],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+        HStack(spacing: 6) {
+            if model.isBuffering {
+                // 缓冲提示。**光有文字不够**：状态行在顶部、字很小，
+                // 而"卡住了"是用户的**当下感知**，必须有一个动的东西在视野里。
+                // 文字保留（它说得更准确），指示器负责"一眼看得见"。
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(.white)
+                    .accessibilityIdentifier("player.buffering")
+            }
+            Text(statusText)
+                .font(.caption.monospaced())
+                .foregroundStyle(.white.opacity(0.75))
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+        .background(
+            LinearGradient(
+                colors: [.black.opacity(0.55), .clear],
+                startPoint: .top,
+                endPoint: .bottom
             )
-            .accessibilityIdentifier("player.status")
+        )
+        .accessibilityIdentifier("player.status")
     }
 
     private var statusText: String {

@@ -26,6 +26,29 @@ struct PlayerViewModelTests {
         await kernel.finishEvents()
     }
 
+    /// `isBuffering` 此前**零覆盖** —— 它是缓冲链路的**最后一跳**：
+    /// 内核观察 `paused-for-cache` → 控制器去重上报 → 到这里。
+    /// 前面几跳都有测试，唯独"界面到底知不知道"没有断言，
+    /// 于是"没有缓冲提示"这件事在测试里是**隐形的**。
+    ///
+    /// 两个方向都要断言：**上去**（有提示）+ **回来**（否则转圈永远不停）。
+    @Test
+    func testBufferingFlagGoesUpAndComesBack() async {
+        let (model, kernel) = await makeModel()
+
+        #expect(!model.isBuffering, "前置条件：初始不在缓冲")
+
+        await kernel.emit(.bufferingChanged(true))
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(model.isBuffering, "内核说在缓冲，界面必须知道 —— 否则用户没有任何缓冲提示")
+
+        await kernel.emit(.bufferingChanged(false))
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(!model.isBuffering, "恢复后必须复位，否则指示器永远停不下来")
+        await model.teardown()
+        await kernel.finishEvents()
+    }
+
     /// ⚠️ 时长未知时必须给 `0` 而不是 `NaN` —— `NaN` 会让进度条布局直接崩。
     @Test
     func testProgressIsZeroWhenDurationIsUnknown() async {
