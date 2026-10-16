@@ -40,7 +40,8 @@
 | [`docs/17-P6-T4-起播延迟.md`](docs/17-P6-T4-起播延迟.md) | `P6-T4`：**起播分段归因**（三段各由谁决定）· 两处修复 · 更正 `docs/15`/`docs/16`/`P-045` 三处既有记载 | 起播慢 / 要动探测窗口时 |
 | [`docs/18-P0-T5c-HTTPS行为验证.md`](docs/18-P0-T5c-HTTPS行为验证.md) | `P0-T5c`：**HTTPS 行为验证** —— 结论：**这个产物的 HTTPS 只加密、不校验证书**（真机+模拟器都接受不受信任/名字不匹配的证书）· 根因 · 三条修复路径 | **用 HTTPS 前必读** |
 | [`docs/19-P6-T5-HLS直播源.md`](docs/19-P6-T5-HLS直播源.md) | `P6-T5`：**HLS 直播源** —— 出画 492 ms · 三档直播枚举与切档正常 · **直播下 `duration` = 滑窗末端**（进度百分比无意义）· **落后于窗口不会崩，是丢内容追边缘** | 做直播 / HLS 相关改动前 |
-| [`docs/PITFALLS.md`](docs/PITFALLS.md) | **踩坑日志**（现象 → 根因 → 处置 → 防再犯），现有 `P-001`–`P-077`（**编号只增不删**），末段为**跨项目移植区**（来源 Marquee / HabitLoop / meta 待回流清单） | **动手前扫一遍**，能省掉重复排查 |
+| [`docs/20-P0-T5d-HTTPS校验修复.md`](docs/20-P0-T5d-HTTPS校验修复.md) | `P0-T5d`：**HTTPS 校验修复** —— **一行 `tls-verify=yes`** + 两处配方修复（产物里"不在配方中"的改动 · 嵌套补丁静默失败） | 用 HTTPS / 重构建产物前 |
+| [`docs/PITFALLS.md`](docs/PITFALLS.md) | **踩坑日志**（现象 → 根因 → 处置 → 防再犯），现有 `P-001`–`P-081`（**编号只增不删**），末段为**跨项目移植区**（来源 Marquee / HabitLoop / meta 待回流清单） | **动手前扫一遍**，能省掉重复排查 |
 
 ## 工程结构
 
@@ -222,29 +223,31 @@ xcrun devicectl device process launch --device <真机 UDID> --console \
 #   ⚠️ 实时源另有一项产品侧改动：探测窗口缩到 0.2 s（`StreamProbePlan`，只对 rtsp/rtmp/srt/udp 生效；
 #      HTTP / 本地文件**不动**）—— 它把实时源的 `file-loaded` 从 1131–1206 ms 压到 **311–420 ms**。
 
-# ⑥g **HTTPS 行为取证**（`P0-T5c`：验"证书校验到底有没有生效"，报告见 docs/18）
-#   ⚠️ **结论先读**：这份产物的 HTTPS **只加密、不校验对端身份** ——
-#      不受信任的自签、甚至名字不匹配的证书，真机与模拟器都照播。
-#      根因在 FFmpeg 的 SecureTransport 后端（校验只在 `ca_file != nil` 时触发，
-#      而本构建 `HAVE_SECITEMIMPORT 0` ⇒ CA 文件永远加载不了）。修复待拍板。
+# ⑥g **HTTPS 行为 / 校验取证**（`P0-T5c` 验证 · `P0-T5d` 修复；报告见 docs/18 · docs/20）
+#   ✅ **现状：校验已生效**。真因是 **mpv 的 `--tls-verify` 代码默认 `false`**（手册没写默认值），
+#      它无条件把 `tls_verify=0` 传给 lavf ⇒ FFmpeg 走"不校验"分支。修法 = 一行
+#      `setOption(handle, "tls-verify", "yes")`；**FFmpeg 不需要改**。
+#   ⚠️ 重构建产物时注意：配方在 spike/p0-t5b-lgpl-dynamic-build/，改完要 `stage-libmpv.sh`
+#      装入 + `nm -u` 确认 FFmpeg 补丁落地（P-078/P-079）。
 #   ① 造一次性证书（/tmp，不入仓库）。四项硬要求少一条会得到"另一种失败"：
 #      SAN 必填 · extendedKeyUsage=serverAuth · RSA≥2048 · 有效期 ≤825 天
 openssl req -x509 -newkey rsa:2048 -nodes -keyout /tmp/pl-tls/ca.key -out /tmp/pl-tls/ca.crt \
   -days 2 -subj "/CN=PlayerStack Test CA" -addext "basicConstraints=critical,CA:TRUE" \
   -addext "keyUsage=critical,keyCertSign,cRLSign"
-#   ② 起 HTTPS 服务器（本票给 serve-range.py 新增的开关）
+#   ② 起三台服务器，**只换证书**（CA1/名字匹配 · CA1/名字不匹配 · CA2/名字匹配）
 python3 Tools/serve-range.py --port 8443 --root /tmp/vidprobe2 \
   --tls-cert /tmp/pl-tls/server.crt --tls-key /tmp/pl-tls/server.key
-#   ③ 模拟器上跑（⚠️ 清代理变量：代理会劫持回环请求，P-059）
+#   ③ 装/不装信任各跑一次（⚠️ 清代理变量：代理会劫持回环请求，P-059）
+xcrun simctl keychain <UDID> add-root-cert /tmp/pl-tls/ca.crt
 env -u HTTP_PROXY -u HTTPS_PROXY xcrun simctl launch --terminate-running-process \
   --console-pty <UDID> com.playerstack.demo -- -directURL https://127.0.0.1:8443/x.mp4
-#   ⇒ 判据：**不受信任的证书必须失败**。实测它 `state=playing` ⇒ 校验没生效。
-#   ⇒ 拿会校验的客户端打同一台服务器做对照（同一个 TLS 后端）：
-curl -s -o /dev/null -w "%{http_code}\n" https://127.0.0.1:8443/x.mp4 -r 0-100   # → 000（拒）
-#   ④ 服务器侧会打 `[tls] 握手失败：… unknown ca` —— 那是"客户端真的校验并拒绝"的直接证据；
-#      只看客户端"没收货"不够：那与"压根没连上"看起来一样（P-074 / P-056）。
+#   ⇒ 判据矩阵（模拟器实测**全中**）：明文照播（无回归）· 未受信任必失败 · 名字不匹配必失败 ·
+#      **装进信任库后同一个 URL 能播** · 受信任但名字不匹配仍失败（主机名校验也在）·
+#      **另一个从未装过的根必失败**（这条最干净：④ vs ⑦ 只差"哪个根"）
+#   ⇒ 服务端会打 `[tls] 握手失败：… certificate unknown` —— 那是"客户端真的校验并拒绝"的直接证据；
+#      只看客户端"没收货"不够：那与"压根没连上"看起来一样（P-056）。
 #   ⚠️ 两个环境坑：`simctl launch --stdout/--stderr` 落不下东西（P-074，要用 --console-pty）；
-#      重装 app 会换数据容器路径（P-075）。
+#      **`simctl keychain reset` 并不撤销已装的根**（P-080）⇒ 闭合因果请换一个从未装过的根。
 
 # ⑥h **HLS 直播取证**（`P6-T5`：起播 + 直播下的轨道清单，报告见 docs/19）
 #   造三档 HLS 直播（滑动窗口 6×2s = 12s）；-re 实时 · -g 48 ⇒ 每 2s 一个关键帧
@@ -403,7 +406,7 @@ playerlearning/
 
 | 项 | 说明 |
 | --- | --- |
-| ~~HTTPS 流的实际行为~~ → **已验证，发现缺陷** | `P0-T5c`（2026-10-16 补做）：**这里的 HTTPS 只加密、不校验证书** —— 不受信任/名字不匹配的证书都会被接受（真机+模拟器）。根因与三条修复路径见 [`docs/18`](docs/18-P0-T5c-HTTPS行为验证.md)（**推荐打一个小补丁让系统信任库生效**）。⚠️ **修复需重构建产物，尚未动** |
+| ~~HTTPS 流的实际行为~~ → **已验证并已修复** | `P0-T5c` 验出**只加密、不校验证书**（不受信任/名字不匹配都照播）；`P0-T5d` **修好**：真因是 **mpv 的 `--tls-verify` 代码默认 `false`** ⇒ 一行 `tls-verify=yes` 即让校验生效（六条探针全中），**FFmpeg 无需改动**。见 [`docs/18`](docs/18-P0-T5c-HTTPS行为验证.md) / [`docs/20`](docs/20-P0-T5d-HTTPS校验修复.md) |
 | 切清晰度是否带动音轨 | ✅ **已答**：不带动（三档音频做成不同采样率实测，[`docs/14`](docs/14-P5-T5-HLS多码率调研.md) §8） |
 | ~~直播下的轨道清单~~ → **已验** | `P6-T5`（2026-10-16）：HLS **直播**下三档照常枚举、切档回读正确（[`docs/19`](docs/19-P6-T5-HLS直播源.md)） |
 | ~~HLS **直播**源的起播~~ → **已验** | `P6-T5`：出画 **492 ms**（拉取式 ⇒ 短探测窗口规则不作用于它，本来就不慢） |
@@ -419,9 +422,10 @@ playerlearning/
 
 要继续往下推，只剩"**已知缺口**"与"**只能人做**"两类（都在上面「仍未覆盖」表里）：
 
-1. **HTTPS 证书校验** —— ✅ 验证已完成（`P0-T5c`）：结论是**不校验身份**，属**安全缺口**。
-   修复未动，三条路见 [`docs/18`](docs/18-P0-T5c-HTTPS行为验证.md) §五（推荐打 FFmpeg 小补丁 ⇒ 系统信任库生效）。
-   无论选哪条都要**重构建产物**，并重跑"不受信任必须失败"。**这一项等一句话。**
+1. ~~**HTTPS 证书校验**~~ —— ✅ **已验并已修**（`P0-T5c` 验出缺口 · `P0-T5d` 修复）：
+   真因是 mpv 的 `--tls-verify` **代码默认 `false`** ⇒ 一行 `tls-verify=yes` 让校验生效；
+   FFmpeg 不需要改。边界：真机上"装 CA 后能播"**刻意不验**（要动用户手机的信任设置）。
+   见 [`docs/20`](docs/20-P0-T5d-HTTPS校验修复.md)。
 2. ~~**直播下的轨道清单 / HLS 直播源的起播**~~ —— ✅ **已验**（`P6-T5`，[`docs/19`](docs/19-P6-T5-HLS直播源.md)）。
    顺带验掉了一个担心的失败形态：落后于滑动窗口**不会崩**，是"丢内容追直播边缘"（0 次 404）。
    剩下的直播项：**LL-HLS**（需要 partial segment 的源）· **直播下的进度呈现**（产品决策）。

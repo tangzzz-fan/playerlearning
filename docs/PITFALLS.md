@@ -2000,6 +2000,127 @@ MACIP=$(ipconfig getifaddr "$(route -n get default | awk '/interface:/{print $2}
 
 ---
 
+## P-078 · **产物里有、配方里没有** —— 而"加补丁"这个动作会把它**悄悄清掉**
+
+**现象**（`P0-T5c` 的修复过程中发现）：要给 FFmpeg 打补丁，先摸清了 mpvkit 的补丁机制
+（`base.swift`：`Sources/BuildScripts/patch/<依赖名>/*.patch` 会被 `git apply`）。
+一查才发现两件事：
+
+1. `patch/FFmpeg/` **不存在**，而 FFmpeg 源码树里**有未提交改动**：
+   `libavcodec/videotoolbox.c` 把 VideoToolbox 像素缓冲的
+   `kCVPixelBufferOpenGLESCompatibilityKey` 换成了 **`kCVPixelBufferMetalCompatibilityKey`**。
+2. **拿符号证据判它在不在产物里**：`nm -u Libavcodec` 里
+   `kCVPixelBufferMetalCompatibilityKey` **命中 1 次**、`kCVPixelBufferOpenGLESCompatibilityKey` **0 次**
+   ⇒ **这个改动确实进了产物**，而仓库的构建配方（`spike/` 的 01/02 两个补丁）**完全没有它**。
+
+**根因（两层，第二层才是真正危险的）**：
+
+```swift
+let patch = ... "Sources/BuildScripts/patch/\(library.rawValue)"
+if FileManager.default.fileExists(atPath: patch.path) {   // ← 只有这个目录存在才进来
+    _ = try? Utility.launch(path: "/usr/bin/git", arguments: ["checkout", "."], ...)  // ← 还原整棵树
+    for fileName in ... { try! ... "apply" ... }          // ← 再套记录在案的补丁
+}
+```
+
+① 上一轮构建时**手工改了依赖源码、没固化进配方** ⇒ 那次产物**不可由配方复现**；
+② 而 `git checkout .` 被关在"补丁目录存在"这个条件里 ⇒
+**目录不存在时手工改动被保留并编译进产物**（所以它进去了）；
+⇒ **一旦为了新修复去创建这个目录，同一次构建就会把它清掉** ——
+也就是"加补丁"这个动作会**静默删掉产物里已有的特性**（这里是 hwdec 帧的 Metal 互操作）。
+
+**处置 / 判据**：
+- **动构建配方之前，先扫一遍所有依赖树**（`for d in dist/*/; git -C $d status --porcelain`）；
+- 对每一处未提交改动，**用可执行证据判"在不在产物里"**
+  （本例：导入符号；`strings` 看不到是正常的 —— CFString 常量的字面量在 CoreVideo 里，不在我们的二进制里）；
+- **先把它固化成补丁**（`03-ffmpeg-videotoolbox-metal.patch`），**再**加新补丁（`04-…`）；
+- 构建后**逐字节比对"跳过的库"**（本次先存了 105 个产物的指纹），把"我只重建了需要的部分"变成可证的。
+
+**一句话**：**"我记得我用这个配方构建过"不是证据**；
+判据是"**配方能不能造出这个产物**"，而它只能用**符号级 / 逐字节**的比对来回答。
+
+**同族**：`P-052`（把环境缺口当产品缺陷）· `P-073`（"值"与"效果"要分别取证）·
+`P-034`（没被执行的事返回绿）。
+
+---
+
+## P-079 · **嵌套补丁**会静默失败：外层 patch 里装内层 patch，内层那行"只有空格的上下文"会被弄坏
+
+**现象**（`P0-T5d`）：要把 FFmpeg 的改动交给 mpvkit（它在 `Sources/BuildScripts/patch/FFmpeg/` 下
+`git apply` 每个 `.patch`），而 build.sh 只会把**仓库里**的 `0*.patch` 应用到 mpvkit 仓 ——
+于是第一版做法是：写一个外层 patch，**它的内容是"创建内层 patch 文件"**。
+
+构建日志说两个补丁都 `applied`，产物却少了一处改动。事后核对源码树：
+`0001`（videotoolbox）**应用成功**、`0002`（tls）**根本没上**（文件 mtime 还停在更早的重置时刻）。
+
+**根因（两层，合起来才会静默）**：
+① mpvkit 那边是 `try! Utility.launch(path: "/usr/bin/git", arguments: ["apply", …])` ——
+   `git apply` 返回非零**不会抛**，**没有任何错误输出**；
+② 外层 patch 在创建内层 patch 时，内层里"**只有空格的上下文行**"被弄坏
+   （`git apply` 那句 `trailing whitespace` 警告指向的就是它）⇒ 内层 patch 自己的 `--check` 会失败 ⇒ ①② 一起 = **没上，且没人知道**。
+
+**处置**：**不要嵌套**。`build.sh` 现在直接把它拷进去：
+
+```bash
+if [ -d "$HERE/ffmpeg" ]; then
+  mkdir -p "$SRC/Sources/BuildScripts/patch/FFmpeg"
+  cp "$HERE"/ffmpeg/*.patch "$SRC/Sources/BuildScripts/patch/FFmpeg/"
+  echo "copied $(ls "$HERE"/ffmpeg/*.patch | wc -l | tr -d ' ') ffmpeg patch(es) into mpvkit"
+fi
+```
+
+**判据 / 防再犯**：
+- **"我传了补丁" ≠ "补丁上了"**：构建后要**在产物里**验证它落地（本例：`nm -u` 里是否有
+  `kCVPixelBufferMetalCompatibilityKey`），或至少核对源码树的 `git diff`；
+- 看到"工具说 applied、效果却没有"时，第一件事是**去源码树看那个文件**，而不是重跑构建；
+- 这一条与 `P-078`、`P-073` 是同一族：**中间有一个"不报错的传递环节"，就必须在终点取证**。
+
+---
+
+## P-080 · `simctl keychain reset` **并不撤销**已装的根证书
+
+**现象**（`P0-T5d`）：`xcrun simctl keychain <UDID> add-root-cert ca.crt` 之后，未受信任的 HTTPS 变成能播；
+于是想用"**撤销它**"来闭合因果 —— `keychain reset` + **重启模拟器**之后再跑同一条 URL：
+**仍然能播**。（第一次跑还卡在 `preparing`，复跑又变成 `playing` —— 看起来像"撤销生效了但行为不稳"。）
+
+**根因**：`reset` 并没有把这枚根证书从"受信任的根"里去掉（或至少不等于"未装过"这个状态）。
+**而"以为撤销了"比"没撤销"更危险**：它会让"装了→撤销→又失败"这种三段论证**得出一个假的闭环**。
+
+**处置 / 判据**：
+- 闭合因果**不要依赖撤销**，改用**另一个从未装过的根**（本轮：给同名的服务器换一张由 CA2 签发的证书 ⇒
+  必须失败）。它比"撤销"更干净，因为"从未装过"是个**确定的状态**；
+- 一般化：**凡是"撤销 / 清理 / reset 类操作"，都必须先用负控证明它真的生效了**
+  —— 否则它只是在讲一个你想听的故事（同 `P-034`：没被执行的事返回绿）。
+
+**同族**：`P-052` · `P-073` · `P-079`。
+
+---
+
+## P-081 · 漏跑 postprocess ⇒ **真机崩、模拟器"能跑"**（`install_name` 指向构建树）
+
+**现象**（`P0-T5d`）：重构建产物时只跑了 `build.sh`，漏掉配方的第二步
+`postprocess-framework.sh`。结果：
+
+- **真机**：app 一启动就崩 —— `dyld: Library not loaded: /private/tmp/p0t5b-build/mpvkit/dist/libmpv/ios/thin/arm64/lib/libmpv.2.dylib`；
+- **模拟器**：**同一份 app 一切正常**，探针全过。
+
+**根因**：产物 dylib 的 `install_name` 是**构建树的绝对路径**（mpvkit 不管这个），
+`postprocess-framework.sh` 就是把它改成 `@rpath/Libmpv.framework/Libmpv`。
+而**模拟器跑在宿主机上** ⇒ `/private/tmp/p0t5b-build/…` 这个路径**真的存在**
+⇒ 它加载的其实是**构建树里那份**（内容与装箱的那份相同 ⇒ 结论侥幸没错，但**证据路径不对**）。
+真机上那个路径不存在 ⇒ dyld 直接崩。
+
+**处置 / 判据**：
+- 配方是**两步**：`./build.sh` **然后** `./postprocess-framework.sh`；
+- 构建后**必核**：`otool -D <slice>/Libmpv.framework/Libmpv` == `@rpath/Libmpv.framework/Libmpv`
+  （还有 README 里那份 7 条待验证清单）；
+- **"模拟器通过"不能替代"真机验证"**：本例里模拟器给的是一条**理由错误的绿灯**
+  —— 它验证的不是"装箱的框架能被加载"，而是"宿主机上恰好有那个路径"。
+
+**同族**：`P-052` · `P-073` · `P-078` · `P-079` —— 全是"**取证手段本身不可靠，而读数很好看**"。
+
+---
+
 > ### 与既有条目同源、故不重复展开的（仅登记映射，便于日后合并检索）
 >
 > | 其他项目的条目 | 本项目已有 |
