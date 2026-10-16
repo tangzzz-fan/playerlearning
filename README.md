@@ -39,7 +39,8 @@
 | [`docs/16-P6-T3-低延迟参数.md`](docs/16-P6-T3-低延迟参数.md) | `P6-T3`：低延迟默认值落地（`cache-secs=1` + `cache-pause-initial=no`）· **三段切分归因** · 代价量化 | 要改网络/缓存参数时 |
 | [`docs/17-P6-T4-起播延迟.md`](docs/17-P6-T4-起播延迟.md) | `P6-T4`：**起播分段归因**（三段各由谁决定）· 两处修复 · 更正 `docs/15`/`docs/16`/`P-045` 三处既有记载 | 起播慢 / 要动探测窗口时 |
 | [`docs/18-P0-T5c-HTTPS行为验证.md`](docs/18-P0-T5c-HTTPS行为验证.md) | `P0-T5c`：**HTTPS 行为验证** —— 结论：**这个产物的 HTTPS 只加密、不校验证书**（真机+模拟器都接受不受信任/名字不匹配的证书）· 根因 · 三条修复路径 | **用 HTTPS 前必读** |
-| [`docs/PITFALLS.md`](docs/PITFALLS.md) | **踩坑日志**（现象 → 根因 → 处置 → 防再犯），现有 `P-001`–`P-075`（**编号只增不删**），末段为**跨项目移植区**（来源 Marquee / HabitLoop / meta 待回流清单） | **动手前扫一遍**，能省掉重复排查 |
+| [`docs/19-P6-T5-HLS直播源.md`](docs/19-P6-T5-HLS直播源.md) | `P6-T5`：**HLS 直播源** —— 出画 492 ms · 三档直播枚举与切档正常 · **直播下 `duration` = 滑窗末端**（进度百分比无意义）· **落后于窗口不会崩，是丢内容追边缘** | 做直播 / HLS 相关改动前 |
+| [`docs/PITFALLS.md`](docs/PITFALLS.md) | **踩坑日志**（现象 → 根因 → 处置 → 防再犯），现有 `P-001`–`P-077`（**编号只增不删**），末段为**跨项目移植区**（来源 Marquee / HabitLoop / meta 待回流清单） | **动手前扫一遍**，能省掉重复排查 |
 
 ## 工程结构
 
@@ -245,6 +246,31 @@ curl -s -o /dev/null -w "%{http_code}\n" https://127.0.0.1:8443/x.mp4 -r 0-100  
 #   ⚠️ 两个环境坑：`simctl launch --stdout/--stderr` 落不下东西（P-074，要用 --console-pty）；
 #      重装 app 会换数据容器路径（P-075）。
 
+# ⑥h **HLS 直播取证**（`P6-T5`：起播 + 直播下的轨道清单，报告见 docs/19）
+#   造三档 HLS 直播（滑动窗口 6×2s = 12s）；-re 实时 · -g 48 ⇒ 每 2s 一个关键帧
+mkdir -p /tmp/hls-live-ladder && cd /tmp/hls-live-ladder
+ffmpeg -re -stream_loop -1 -i /tmp/vidprobe2/sintel_trailer-720p.mp4 \
+  -filter_complex "[0:v]split=3[v1][v2][v3];[v1]scale=1280:720[v1o];[v2]scale=854:480[v2o];[v3]scale=426:240[v3o];[0:a]asplit=3[a1][a2][a3]" \
+  -map "[v1o]" -map "[v2o]" -map "[v3o]" -map "[a1]" -map "[a2]" -map "[a3]" \
+  -c:v libx264 -preset veryfast -g 48 -keyint_min 48 -sc_threshold 0 \
+  -b:v:0 2500k -b:v:1 1200k -b:v:2 400k -c:a aac -b:a 128k \
+  -f hls -hls_time 2 -hls_list_size 6 -hls_flags delete_segments \
+  -hls_segment_filename "/tmp/hls-live-ladder/v%v/seg%03d.ts" \
+  -master_pl_name master.m3u8 \
+  -var_stream_map "v:0,a:0 v:1,a:1 v:2,a:2" "/tmp/hls-live-ladder/v%v/index.m3u8"
+#   ⚠️ 生成完**先 `cat master.m3u8`**：目录形状多一层它就不落地，而且**不报错**（P-077）。
+#   ⚠️ 地址**问路由表**别写死 en0（接口名会变，症状像"HLS 播放坏了"，P-076）：
+MACIP=$(ipconfig getifaddr "$(route -n get default | awk '/interface:/{print $2}')")
+python3 Tools/serve-range.py --port 8770 --root /tmp/hls-live-ladder --host 0.0.0.0
+xcrun devicectl device process launch --device <真机 UDID> --console --terminate-existing \
+  com.playerstack.demo -- -directURL "http://$MACIP:8770/master.m3u8" -exerciseTracks
+#   ⇒ [startup] 出画=492ms · 三档清单 id=1/2/3 · 切档后回读 854×480 · 42s 0 次 failed
+#   判"它真是直播"要看**服务端**：① playlist 被反复重载 ② playlist 里**没有** #EXT-X-ENDLIST
+#   （客户端两种都是 state=playing，光看状态行分不出来）
+#   想看"跟不上会怎样"：给服务器加 --throttle 200000（720p 档需要 ~362 KB/s ⇒ 必然跟不上）
+#   ⇒ 实测 **0 次 404**：播放器只向前要数据，抓到的分片是 105→106→107→109→110→113→…（**跳过**）
+#      即"丢内容追直播边缘"，不回头取已删分片 ⇒ 不会因此崩（docs/19 §五）
+
 # ⑦ 真机（⚠️ 两套 Xcode 环境、两个 team ⇒ 构建时**命令行覆盖**，不改仓库）
 #   环境 A · 家里：team UKXWZ3FS84 · 真机 Tango / iPhone 16 Pro
 #   环境 B · 本机：team 3GMJYX32U9 · 真机 Tang的iPhone      ← `project.yml` 里写的是 A 的值
@@ -379,8 +405,10 @@ playerlearning/
 | --- | --- |
 | ~~HTTPS 流的实际行为~~ → **已验证，发现缺陷** | `P0-T5c`（2026-10-16 补做）：**这里的 HTTPS 只加密、不校验证书** —— 不受信任/名字不匹配的证书都会被接受（真机+模拟器）。根因与三条修复路径见 [`docs/18`](docs/18-P0-T5c-HTTPS行为验证.md)（**推荐打一个小补丁让系统信任库生效**）。⚠️ **修复需重构建产物，尚未动** |
 | 切清晰度是否带动音轨 | ✅ **已答**：不带动（三档音频做成不同采样率实测，[`docs/14`](docs/14-P5-T5-HLS多码率调研.md) §8） |
-| 直播下的轨道清单 | **未测**（多档实测都是 VOD） |
-| HLS **直播**源的起播 | **未测**（`P6-T4` 只测了 VOD ladder） |
+| ~~直播下的轨道清单~~ → **已验** | `P6-T5`（2026-10-16）：HLS **直播**下三档照常枚举、切档回读正确（[`docs/19`](docs/19-P6-T5-HLS直播源.md)） |
+| ~~HLS **直播**源的起播~~ → **已验** | `P6-T5`：出画 **492 ms**（拉取式 ⇒ 短探测窗口规则不作用于它，本来就不慢） |
+| LL-HLS（`#EXT-X-PART`）的起播与延迟 | **未测**：本轮是常规 HLS（2 s 分片 ⇒ 天然 ~6–8 s 落后），需要一个支持 partial segment 的源 |
+| 直播下的**进度呈现** | **未定（产品决策）**：`duration` = 滑窗末端 ⇒ 进度百分比无意义（`progress` 恒在 0.9+）。见 [`docs/03`](docs/03-路线图.md) §五 |
 | macOS 上真实播放 | **未验**（自建 libmpv 只有 iOS 切片）⇒ `M5` 的口径只能是编译面 |
 
 
@@ -394,7 +422,9 @@ playerlearning/
 1. **HTTPS 证书校验** —— ✅ 验证已完成（`P0-T5c`）：结论是**不校验身份**，属**安全缺口**。
    修复未动，三条路见 [`docs/18`](docs/18-P0-T5c-HTTPS行为验证.md) §五（推荐打 FFmpeg 小补丁 ⇒ 系统信任库生效）。
    无论选哪条都要**重构建产物**，并重跑"不受信任必须失败"。**这一项等一句话。**
-2. **直播下的轨道清单 / HLS 直播源的起播** —— 需要可控的 HLS 直播源（`ffmpeg → mediamtx` 已有，HLS 要另造）。
+2. ~~**直播下的轨道清单 / HLS 直播源的起播**~~ —— ✅ **已验**（`P6-T5`，[`docs/19`](docs/19-P6-T5-HLS直播源.md)）。
+   顺带验掉了一个担心的失败形态：落后于滑动窗口**不会崩**，是"丢内容追直播边缘"（0 次 404）。
+   剩下的直播项：**LL-HLS**（需要 partial segment 的源）· **直播下的进度呈现**（产品决策）。
 3. **只能肉眼做的**：弱网缓冲提示的文案是否够清楚；键位的**手感**（判定与副作用已被单测与真机 UI 用例覆盖）。
 
 > **范围锚点是 `M4`（在线点播可用）**：任何不推进 `M4` 的需求都往后排。
