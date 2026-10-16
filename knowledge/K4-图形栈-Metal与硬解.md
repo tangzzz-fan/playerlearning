@@ -9,12 +9,14 @@
 > | **Metal** | 苹果的 GPU 接口（系统唯一的现代底层） |
 > | **Vulkan** | 新一代跨平台 GPU 接口 —— **苹果不提供驱动**，所以只能"翻译" |
 > | **MoltenVK** | 那个翻译层：Vulkan 调用 → Metal 调用 |
+> | **libplacebo** | 高质量 GPU 渲染库（`gpu-next` 的核心）。⚠️ **Vulkan 与 OpenGL 两条后端都有** —— 我们走 Vulkan（§2） |
 > | **VideoToolbox** | **硬件解码器** —— 它**不在图形链上，在解码链上**；但它的产出要汇入图形链 |
 > | **OpenGL / OpenGL ES** | 上一代接口（苹果已废弃，但本项目里还有两处保留） |
 >
 > 我们的链路：**`libplacebo → Vulkan 调用 → MoltenVK → Metal → 我们的 CAMetalLayer`**
 >
-> 一句话记住它们的关系：**libplacebo 只会说 Vulkan，苹果只听得懂 Metal，中间必须有翻译。**
+> 一句话记住它们的关系：**苹果只听得懂 Metal；而「我们选的这条渲染管线」说的是 Vulkan
+> ⇒ 中间必须有翻译。**（⚠️ 别读成"libplacebo 只会说 Vulkan" —— 那句是错的，见 §2。）
 
 ![图形栈：Vulkan 为什么要绕到 Metal](assets/k4-graphics-stack.svg)
 
@@ -33,15 +35,30 @@
 
 ---
 
-## 2 为什么我们**必须**绕这一圈
+## 2 为什么**我们这条配置**必须绕这一圈
 
-因为渲染算法那一层是 **libplacebo**（mpv 的 `gpu-next` 管线），而 **libplacebo 需要 Vulkan**。
+⚠️ **先把一个常见误读拆掉**：绕路是**我们这组选项**的特征，**不是 `libplacebo` 的属性**。
+实测产物里 `libplacebo` 的**两条后端都在**（符号级证据）：
 
-所以链路被迫变成：`libplacebo（只会 Vulkan）→ MoltenVK（翻译）→ Metal（苹果只认这个）`。
+```bash
+strings <产物>/Libmpv | grep -oE 'pl_(opengl|vulkan)[a-z_]*' | sort -u
+# pl_opengl_create · pl_opengl_create_swapchain · pl_opengl_swapchain_update_fb · pl_opengl_unwrap · pl_opengl_wrap
+# pl_vulkan_choose_device · pl_vulkan_create · pl_vulkan_create_swapchain · pl_vulkan_destroy · pl_vulkan_hold_ex
+```
 
-**有没有不绕路的选项？** 有 —— mpv 支持 `gpu-api=opengl`（直接走 GLES）。
-但我们**没有**选它：`gpu-next` + libplacebo 是 mpv 里画质最好的那条路（HDR 色调映射、高质量缩放），
-而它恰好要 Vulkan。这是一个**画质 vs 绕路**的取舍，我们选了画质。
+`libplacebo` 是一套 GPU 渲染库，它**同时**提供 Vulkan 后端与 OpenGL 后端
+（mpv 的 `gpu-next` 就是"选一条后端把它接上"）。所以：
+
+- **它并不是"只会说 Vulkan"**；说它只会说 Vulkan，会让人以为"绕 MoltenVK 是唯一的路"——不是。
+- 但我们**选了 Vulkan**（[`K3`](K3-运行面-一帧像素的旅程.md) §2 抽屉 A：`gpu-api=vulkan` +
+  `gpu-context=moltenvk`），因为 `gpu-next` + Vulkan 是 mpv 里画质最好的那条路
+  （HDR 色调映射、高质量缩放、`gpu-next` 的完整能力）。
+- 而**苹果不提供 Vulkan 驱动** ⇒ 绕的这一圈（`MoltenVK`）是**这条配置的代价**。
+
+**有没有不绕路的选项？** 有 —— `gpu-api=opengl`：让 `libplacebo` 走它自己的
+**OpenGL 后端**（对应苹果的 OpenGL ES）。
+我们**没有**选它：GLES 是被苹果废弃的上一代接口，`gpu-next` 在 GL 上的能力也不如 Vulkan。
+这是一个 **画质 vs 绕路** 的取舍，我们选了画质。
 
 ---
 
@@ -81,10 +98,17 @@ strings Libmpv | grep -m1 "^Configuration: -Dlibmpv=true"
 ### 3.3 符号面的三个计数
 
 ```bash
-nm -gU Libmpv | grep -cE "_vk[A-Z]"                    # → 428（Vulkan 实现）
-strings Libmpv | grep -icE "moltenvk|mvk"              # → 128（MoltenVK 痕迹）
-nm -u  Libmpv | grep -c kCVPixelBufferMetalCompatibilityKey  # → 1（见 §4）
+nm -gU Libmpv | grep -cE "_vk[A-Z]"                          # → 428（Vulkan 实现）
+nm -u  Libmpv | grep -c kCVPixelBufferMetalCompatibilityKey   # → 1（见 §4）
+
+# ⚠️ 计数型判据**必须把匹配口径一起写出来**，否则同一个问题能量出好几个数：
+strings Libmpv | grep -c  -i "moltenvk"        # → 20   ✅ 用这个
+strings Libmpv | grep -c  -E "moltenvk|mvk"    # → 28
+strings Libmpv | grep -c -iE "moltenvk|mvk"    # → 840  ❌ `-i` 下的子串匹配把无关字符串全算进来了
 ```
+
+**这三个数是同一条命令的三种写法**，差 40 倍 —— 本页早先记的"→ 128"复现不出来，
+就是当时**没把口径写下来**（教训：[`P-082`](../docs/PITFALLS.md)）。
 
 ---
 
@@ -188,7 +212,7 @@ nm -u  "$B" | grep -c kCVPixelBufferMetalCompatibilityKey      # 兼容性标记
 | **OpenGL ES** | 上一代跨平台 GPU 接口；苹果已废弃 |
 | **Vulkan** | 新一代跨平台 GPU 接口；**苹果不提供驱动** |
 | **MoltenVK** | 把 Vulkan 调用翻译成 Metal 的层 |
-| **libplacebo** | 高质量 GPU 渲染库（`gpu-next` 的核心）；**只会说 Vulkan** |
+| **libplacebo** | 高质量 GPU 渲染库（`gpu-next` 的核心）；**Vulkan 与 OpenGL 两条后端都有**（我们走 Vulkan） |
 | **VideoToolbox** | 苹果的硬件编解码框架 |
 | **`CVPixelBuffer`** | 苹果的图像容器；硬解产出它就是它 |
 | **IOSurface** | 跨框架共享显存缓冲（CPU/GPU、GL/Metal 之间常走它） |
