@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 330" width="680" height="330" style="max-width:100%;height:auto" role="img">
+<title>构建管线：从配方到产物</title>
+<desc>五个阶段：克隆 MPVKit 源、构建二十个单元、打包 xcframework、修 install_name、装配进仓库；三个补丁分别注入不同层。</desc>
+
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowd" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#534AB7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<text x="40" y="30" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" fill="#5F5E5A">触发条件：换 mpv/FFmpeg 版本 · 改配方 · 换架构 —— 三者之外不跑</text>
+
+<rect x="40" y="52" width="104" height="64" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="92" y="78" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="500" fill="#0C447C" text-anchor="middle">① 克隆源</text>
+<text x="92" y="98" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#185FA5" text-anchor="middle">固定 revision</text>
+
+<rect x="163" y="52" width="104" height="64" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="215" y="78" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="500" fill="#0C447C" text-anchor="middle">② 构建 20 个</text>
+<text x="215" y="98" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#185FA5" text-anchor="middle">ffmpeg 第 17</text>
+
+<rect x="286" y="52" width="104" height="64" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="338" y="78" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="500" fill="#0C447C" text-anchor="middle">③ 打包</text>
+<text x="338" y="98" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#185FA5" text-anchor="middle">xcframework</text>
+
+<rect x="409" y="52" width="104" height="64" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+<text x="461" y="78" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="500" fill="#633806" text-anchor="middle">④ 修名</text>
+<text x="461" y="98" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#854F0B" text-anchor="middle">postprocess</text>
+
+<rect x="532" y="52" width="104" height="64" rx="8" fill="#EAF3DE" stroke="#3B6D11" stroke-width="0.5"/>
+<text x="584" y="78" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="500" fill="#27500A" text-anchor="middle">⑤ 装配</text>
+<text x="584" y="98" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#3B6D11" text-anchor="middle">stage-libmpv</text>
+
+<path d="M144 84L161 84" fill="none" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M267 84L284 84" fill="none" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M390 84L407 84" fill="none" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M513 84L530 84" fill="none" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<rect x="163" y="146" width="352" height="58" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="339" y="168" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="500" fill="#3C3489" text-anchor="middle">3 个补丁 —— 分两层注入，不是一个机制</text>
+<text x="339" y="188" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#534AB7" text-anchor="middle">改 mpvkit 自己的脚本（01 / 02） · 改 FFmpeg 源码（ffmpeg/0001）</text>
+<path d="M215 118L215 144" fill="none" stroke="#534AB7" stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#arrowd)"/>
+
+<rect x="40" y="228" width="596" height="56" rx="8" fill="#F7F6F3" stroke="#D3D1C7" stroke-width="0.5"/>
+<text x="338" y="250" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="500" fill="#2C2C2A" text-anchor="middle">产物：MPV/Library/Libmpv.xcframework · 106 MB（真机 34 + 模拟器 72）</text>
+<text x="338" y="270" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A" text-anchor="middle">gitignored —— 不进仓库；换机器要重编或拷贝</text>
+
+<text x="40" y="312" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">耗时：全量 ≈ 80 min（20 个单元）· 只重建 ffmpeg + mpv ≈ 7 min（跳过的库可证明逐字节未变）</text>
+</svg>

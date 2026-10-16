@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 290" width="680" height="290" style="max-width:100%;height:auto" role="img">
+<title>起播耗时：探测窗口的影响与出画时间的三段构成</title>
+<desc>上半对比同一探针在默认窗口、缩短窗口与 HTTP 源下的耗时；下半把 HTTP 源 232 毫秒的出画时间拆成三段。</desc>
+
+<text x="40" y="28" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="500" fill="#2C2C2A">同一个探针（file-loaded）· 同一台服务器 —— 只改源代码里的探测窗口</text>
+
+<text x="40" y="56" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">RTSP · 默认窗口</text>
+<text x="40" y="72" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">1206 ms</text>
+<rect x="190" y="46" width="440" height="24" rx="6" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5"/>
+<text x="210" y="58" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#501313">慢 —— 实时源上，这个窗口就是用户在等</text>
+
+<text x="40" y="98" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">RTSP · 缩短后</text>
+<text x="40" y="114" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">380 ms</text>
+<rect x="190" y="88" width="139" height="24" rx="6" fill="#EAF3DE" stroke="#3B6D11" stroke-width="0.5"/>
+<text x="345" y="100" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#3B6D11">−65%</text>
+
+<text x="40" y="140" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">HTTP mp4</text>
+<text x="40" y="156" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">72 ms</text>
+<rect x="190" y="130" width="26" height="24" rx="6" fill="#F7F6F3" stroke="#D3D1C7" stroke-width="0.5"/>
+<text x="232" y="142" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">拉取式源一律不动（本来就只有几十毫秒）</text>
+
+<line x1="40" y1="176" x2="640" y2="176" stroke="#D3D1C7" stroke-width="0.5"/>
+
+<text x="40" y="198" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="500" fill="#2C2C2A">同一条 HTTP 源：从"点开"到"出画"的 232 ms 拆成三段</text>
+
+<text x="196" y="212" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#185FA5" text-anchor="middle">1–7</text>
+<line x1="196" y1="216" x2="196" y2="224" stroke="#D3D1C7" stroke-width="0.5"/>
+
+<rect x="190" y="224" width="13" height="26" rx="4" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<rect x="205" y="224" width="131" height="26" rx="4" fill="#B5D4F4" stroke="#185FA5" stroke-width="0.5"/>
+<text x="270" y="241" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#042C53" text-anchor="middle">≈69 ms</text>
+<rect x="338" y="224" width="296" height="26" rx="4" fill="#85B7EB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="486" y="241" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#042C53" text-anchor="middle">≈156 ms</text>
+
+<text x="40" y="268" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">① 建句柄 + 初始化（libmpv）　② 打开文件 —— <tspan font-weight="500">探测窗口就在这一段</tspan>（受产品配置影响）</text>
+<text x="40" y="284" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">③ 等源交出第一帧 —— 由源的 GOP 决定，产品改不了</text>
+</svg>
