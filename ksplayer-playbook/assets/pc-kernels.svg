@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 272" width="680" height="272" style="max-width:100%;height:auto" role="img">
+<title>三种内核：能力、代价、以及该选谁</title>
+<desc>系统播放器最省成本但拿不到帧；libmpv 全能但要处理产物与授权；自研管线最可控但成本最高。</desc>
+
+<text x="40" y="26" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="500" fill="#2C2C2A">内核选型：不是"哪个好"，而是"你愿意为哪一块付成本"</text>
+
+<rect x="40" y="42" width="190" height="176" rx="10" fill="#F7F6F3" stroke="#D3D1C7" stroke-width="0.5"/>
+<text x="56" y="64" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="500" fill="#2C2C2A">系统播放器</text>
+<text x="56" y="82" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">AVPlayer（黑盒）</text>
+<text x="56" y="108" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#3B6D11">✅ 流媒体/DRM/AirPlay/PiP</text>
+<text x="56" y="126" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#3B6D11">✅ 低功耗 · 系统 HDR</text>
+<text x="56" y="144" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#3B6D11">✅ 零体积成本</text>
+<text x="56" y="170" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#A32D2D">❌ 拿不到帧、无法注入</text>
+<text x="56" y="188" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#A32D2D">❌ 格式窄（mkv 就吃力）</text>
+<text x="56" y="208" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">成本 最低</text>
+
+<rect x="245" y="42" width="190" height="176" rx="10" fill="#E6F1FB" stroke="#185FA5" stroke-width="1.5"/>
+<text x="261" y="64" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="500" fill="#0C447C">现成播放器内核</text>
+<text x="261" y="82" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#185FA5">libmpv（白盒）</text>
+<text x="261" y="108" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#3B6D11">✅ 全格式 · 字幕 · 直播</text>
+<text x="261" y="126" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#3B6D11">✅ 时钟/同步/硬解都有</text>
+<text x="261" y="144" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#3B6D11">✅ 可拿帧（换 render API）</text>
+<text x="261" y="170" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#A32D2D">❌ 体积大（一百多 MB）</text>
+<text x="261" y="188" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#A32D2D">❌ 产物与许可要自己处理</text>
+<text x="261" y="208" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#185FA5">成本 中（一次性的产物工程）</text>
+
+<rect x="450" y="42" width="190" height="176" rx="10" fill="#F7F6F3" stroke="#D3D1C7" stroke-width="0.5"/>
+<text x="466" y="64" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="500" fill="#2C2C2A">自研解码管线</text>
+<text x="466" y="82" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">自己写若干条线程</text>
+<text x="466" y="108" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#3B6D11">✅ 完全可控 · 无第三方</text>
+<text x="466" y="126" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#3B6D11">✅ 想怎么处理画面都行</text>
+<text x="466" y="144" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#3B6D11">✅ 可做不含 FFmpeg 的构建</text>
+<text x="466" y="170" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#A32D2D">❌ 数月成本、同步全自己写</text>
+<text x="466" y="188" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#A32D2D">❌ 每一个 bug 都自己扛</text>
+<text x="466" y="208" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">成本 最高</text>
+
+<text x="40" y="244" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">KSPlayer 选了"两个都要"（系统播放器 + 自研管线）—— 那是为了保证能力并集，代价是两套都要养。</text>
+<text x="40" y="262" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">自用场景的通行做法是<tspan font-weight="500">选一个 + 立好边界</tspan>：将来真要第二条腿，注册进表即可（这才是双内核值钱的地方）。</text>
+</svg>
