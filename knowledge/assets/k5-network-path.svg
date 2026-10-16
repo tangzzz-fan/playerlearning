@@ -30,7 +30,7 @@
 
 <rect x="40" y="146" width="600" height="46" rx="8" fill="#F7F6F3" stroke="#D3D1C7" stroke-width="0.5"/>
 <text x="56" y="164" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">产物的白名单实测支持：<tspan fill="#2C2C2A">推流侧</tspan> RTMP · RTSP · SRT　<tspan fill="#2C2C2A">拉流侧</tspan> RTSP · HLS · DASH · RTMP</text>
-<text x="56" y="182" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">（另有 RIST 在 stream 层）—— 但**我们只做拉流那一侧**：推流是上游厂商的活</text>
+<text x="56" y="182" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">（另有 RIST 在 stream 层）—— 但<tspan font-weight="500">我们只做拉流那一侧</tspan>：推流是上游厂商的活</text>
 
 <rect x="40" y="204" width="600" height="38" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
 <text x="56" y="226" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#3C3489">点播没有"推流"那一段：文件直接放在 HTTP 服务器上，播放器一步拉取（还要服务器支持 Range 请求）</text>

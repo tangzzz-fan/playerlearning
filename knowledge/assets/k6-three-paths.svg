@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 296" width="680" height="296" style="max-width:100%;height:auto" role="img">
+<title>把浏览器里的视频变成可处理的帧：三条通路</title>
+<desc>取真实流地址交给播放器、系统级屏幕捕获、在页面内处理；三者的帧归属与代价不同。</desc>
+
+<defs>
+  <marker id="p1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<text x="40" y="24" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="500" fill="#2C2C2A">问题的本质不是"怎么处理"，而是"那帧画面，谁能拿到"</text>
+
+<rect x="40" y="40" width="600" height="44" rx="10" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="56" y="66" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#0C447C">起点：浏览器里的视频 —— 帧在<tspan font-weight="500">浏览器的进程</tspan>里，普通 App 直接拿不到</text>
+
+<rect x="40" y="106" width="250" height="44" rx="8" fill="#EAF3DE" stroke="#3B6D11" stroke-width="0.5"/>
+<text x="56" y="124" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#27500A">① 取出真实流地址</text>
+<text x="56" y="140" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#3B6D11">交给 libmpv 去播</text>
+<path d="M292 128L328 128" fill="none" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#p1)"/>
+<rect x="330" y="106" width="310" height="44" rx="8" fill="#EAF3DE" stroke="#3B6D11" stroke-width="1"/>
+<text x="346" y="124" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#27500A">帧完全在我们手里 · 无损 · 可 seek · 能用 mpv 全部能力</text>
+<text x="346" y="140" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#3B6D11">限制：blob / DRM / 需登录的页面拿不到可用地址</text>
+
+<rect x="40" y="168" width="250" height="44" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+<text x="56" y="186" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#633806">② 屏幕捕获</text>
+<text x="56" y="202" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#854F0B">ReplayKit / ScreenCaptureKit</text>
+<path d="M292 190L328 190" fill="none" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#p1)"/>
+<rect x="330" y="168" width="310" height="44" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="1"/>
+<text x="346" y="186" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#633806">拿到的是<tspan font-weight="500">合成画面</tspan> · 有损 · 含网页 UI · 有延迟</text>
+<text x="346" y="202" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#854F0B">好处：什么页面都能处理，不依赖地址可得性（DRM 也照抓）</text>
+
+<rect x="40" y="230" width="250" height="44" rx="8" fill="#F7F6F3" stroke="#B4B2A9" stroke-width="0.5"/>
+<text x="56" y="248" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#444441">③ 在页面内处理</text>
+<text x="56" y="264" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">WebGL / WebGPU</text>
+<path d="M292 252L328 252" fill="none" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#p1)"/>
+<rect x="330" y="230" width="310" height="44" rx="8" fill="#F7F6F3" stroke="#B4B2A9" stroke-width="0.5"/>
+<text x="346" y="248" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#444441">帧不出浏览器 · 性能与模型体积受 Web 端限制</text>
+<text x="346" y="264" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">适用：结果就在浏览器里显示（不需要回传到别处）</text>
+</svg>
