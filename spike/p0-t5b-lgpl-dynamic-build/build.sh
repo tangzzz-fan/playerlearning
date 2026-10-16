@@ -14,6 +14,16 @@ if [ ! -d "$SRC/.git" ]; then
   git -C "$SRC" checkout "$REVISION"
 fi
 
+# FFmpeg 的补丁**不能**再嵌套一层 git patch 送进来：内层补丁里"只有空格的上下文行"
+# 会在外层 patch 的转义/应用过程中被弄坏，而 mpvkit 那边是 `try!` 调用 ⇒ **静默失败**
+# （实测：0001 应用成功、0002 悄悄没上，产物少了一处改动而没有任何报错 —— 见 P-078/P-079）。
+# ⇒ 这里直接把补丁文件**拷**进 mpvkit 的 patch 目录，由 mpvkit 自己 git apply。
+if [ -d "$HERE/ffmpeg" ]; then
+  mkdir -p "$SRC/Sources/BuildScripts/patch/FFmpeg"
+  cp "$HERE"/ffmpeg/*.patch "$SRC/Sources/BuildScripts/patch/FFmpeg/"
+  echo "copied $(ls "$HERE"/ffmpeg/*.patch | wc -l | tr -d ' ') ffmpeg patch(es) into mpvkit"
+fi
+
 # 依次应用本目录下的补丁（01 = 动态化 + 压回 LGPL-2.1；02 = 环境变量转发）。
 # 幂等：已应用的会被 --check 挡下并跳过。
 for patch in "$HERE"/0*.patch; do

@@ -462,6 +462,15 @@ public actor MPVKernel: PlayerKernelProtocol {
         setOption(handle, "demuxer-max-back-bytes", "16MiB")
         // 网络超时：太短会在弱网下误判为"流断了"，太长会让"打不开"迟迟不报错。
         setOption(handle, "network-timeout", "30")
+        // ⚠️ **必须显式打开证书校验**（`P0-T5d`）。这是一条**默认值陷阱**：
+        //    mpv 的 `--tls-verify` 在代码里默认是 **false**（`stream_lavf_params` 的
+        //    `defaults` 里没有这一项 ⇒ 零值；手册也没写默认值），而它**无条件**把
+        //    `tls_verify=0/1` 传给 lavf ⇒ **不写这一行，FFmpeg 永远走"不校验"那条分支**
+        //    （实测：不受信任、甚至名字不匹配的证书都照播）。
+        //    产物侧还有第二层（`spike/…/04-ffmpeg-tls-verify.patch`）：即使 verify=1，
+        //    FFmpeg 的 SecureTransport 后端在没给 `ca_file` 时**也不会去 evaluate**。
+        //    两层都补齐，校验才真的发生 —— 证据链与判据见 `docs/20`。
+        setOption(handle, "tls-verify", "yes")
         // 起播：实时投递的源上把 lavf 的**流信息分析窗口**缩短（`P6-T4`）。
         // 规则与依据见 `StreamProbePlan` —— 一句话：**实时源上这个窗口就是用户等待**。
         // 只对实时协议生效；HTTP / 本地文件**不动它**（那里窗口不构成等待，
