@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 236" width="680" height="236" style="max-width:100%;height:auto" role="img">
+<title>像素缓冲的兼容性标记：它决定后续能用哪条图形路</title>
+<desc>硬解产出的像素缓冲会带兼容性标记；本项目的配置要求它带 Metal 兼容标记，而不是 OpenGL ES。</desc>
+
+<defs>
+  <marker id="c1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<text x="40" y="26" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="500" fill="#2C2C2A">硬解交给我们的不是一个像素数组，而是一个"像素缓冲"</text>
+
+<rect x="190" y="42" width="300" height="44" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="1"/>
+<text x="340" y="60" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#633806">CVPixelBuffer · 可能直接躺在显存里</text>
+<text x="340" y="76" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#854F0B">它身上带着"能被哪种图形 API 直接用"的标记</text>
+
+<path d="M260 88L200 124" fill="none" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#c1)"/>
+<path d="M420 88L480 124" fill="none" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#c1)"/>
+
+<rect x="40" y="128" width="260" height="66" rx="8" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5"/>
+<text x="56" y="148" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" font-weight="500" fill="#501313">标记 A：OpenGL ES 兼容</text>
+<text x="56" y="166" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#A32D2D">只有 GL / GLES 那条路能直接当纹理用</text>
+<text x="56" y="184" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#A32D2D">❌ 我们的渲染链不走 GL，用不上</text>
+
+<rect x="380" y="128" width="260" height="66" rx="8" fill="#EAF3DE" stroke="#3B6D11" stroke-width="1"/>
+<text x="396" y="148" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" font-weight="500" fill="#27500A">标记 B：Metal 兼容</text>
+<text x="396" y="166" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#3B6D11">Metal（以及经 MoltenVK 的 Vulkan）能直接用</text>
+<text x="396" y="184" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#3B6D11">✅ 我们要的是这个</text>
+
+<text x="40" y="216" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">为什么必须选 B：产物里的 meson 配置是 <tspan font-weight="500">videotoolbox-gl=disabled · videotoolbox-pl=enabled</tspan> —— 硬解帧只能走 libplacebo 那条路</text>
+<text x="40" y="232" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11" fill="#5F5E5A">这就是配方里那处补丁在做的事（把标记换成 Metal）；符号级判据：产物里 Metal 兼容 1 命中 / OpenGL ES 0 命中</text>
+</svg>
