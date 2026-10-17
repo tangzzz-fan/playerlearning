@@ -72,8 +72,8 @@ E1 的真机证据（**服务器侧**日志：不受信任的自签证书 + 真�
 ```
 [range] serving /tmp/vidprobe2 on https://0.0.0.0:8446 …
 [tls] 客户端要先用 `xcrun simctl keychain <udid> add-root-cert <ca.crt>` 信任签发者
-[range] 192.168.2.253 "GET /sintel_trailer-720p.mp4 HTTP/1.1" 206 -      ← 真机真的连上了、取走了数据
-[range] 192.168.2.253 "GET /sintel_trailer-720p.mp4 HTTP/1.1" 206 -
+[range] 192.0.2.11 "GET /sintel_trailer-720p.mp4 HTTP/1.1" 206 -      ← 真机真的连上了、取走了数据
+[range] 192.0.2.11 "GET /sintel_trailer-720p.mp4 HTTP/1.1" 206 -
 ```
 
 **为什么 E3 这条对照是必需的**：只看到"客户端收货了"是不够的 —— 它与"压根没连上 / 路径写错"

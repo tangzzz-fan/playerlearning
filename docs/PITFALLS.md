@@ -45,11 +45,11 @@
 
 ## P-004 · 签名身份里的 **OU 字段不是 Team ID**
 
-**现象**：用 `security find-certificate` 读出的 `88D39V32YV` 当 `DEVELOPMENT_TEAM` 用，构建签名失败。
+**现象**：用 `security find-certificate` 读出的 `〔证书成员 ID〕` 当 `DEVELOPMENT_TEAM` 用，构建签名失败。
 
-**根因**：`88D39V32YV` 是证书的**成员 ID（organizationalUnit）**，不是 Team ID。
+**根因**：`〔证书成员 ID〕` 是证书的**成员 ID（organizationalUnit）**，不是 Team ID。
 
-**处置**：Team ID 从 Xcode 配置读 —— `defaults read com.apple.dt.Xcode DVTDeveloperAccountManagerAppleIDLists`。本机实际有 `YXFC65VYTW`（个人）与 `3GMJYX32U9`（公司）。
+**处置**：Team ID 从 Xcode 配置读 —— `defaults read com.apple.dt.Xcode DVTDeveloperAccountManagerAppleIDLists`。本机实际有 `〔个人 team〕`（个人）与 `〔公司 team〕`（公司）。
 
 **防再犯**：Team ID 只从 Xcode 账号配置取，不从证书字段猜。
 
@@ -129,9 +129,9 @@
 
 **现象**：真机部署需要签名，但不想在公司账号里新建 App ID / 描述文件。
 
-**根因**：本机已存在 `3GMJYX32U9.*` 的 **wildcard 描述文件**，可部署**任意** bundle id。
+**根因**：本机已存在 `〔公司 team〕.*` 的 **wildcard 描述文件**，可部署**任意** bundle id。
 
-**处置**：直接用 `DEVELOPMENT_TEAM = 3GMJYX32U9` + 任意 bundle id（spike 用 `com.p0t5b.*`）。
+**处置**：直接用 `DEVELOPMENT_TEAM = 〔公司 team〕` + 任意 bundle id（spike 用 `com.p0t5b.*`）。
 
 **防再犯**：spike / 一次性验证**一律用 wildcard**，不在公司账号留下垃圾资源。
 
@@ -1414,7 +1414,7 @@ guard let count = getInt64(handle, "playlist-count") else { return false }
 **现象**：在换了机器（或换了真机）之后，真机构建报
 
 ```
-error: No "iOS Development" signing certificate matching team ID "UKXWZ3FS84" with a private key was found.
+error: No "iOS Development" signing certificate matching team ID "YOUR_TEAM_ID" with a private key was found.
 error: Provisioning profile "iOS Team Provisioning Profile: *" doesn't include the currently selected
        device "Tang的iPhone" (identifier 00008140-001E09D1262B001C).
 ```
@@ -1425,13 +1425,13 @@ error: Provisioning profile "iOS Team Provisioning Profile: *" doesn't include t
 **根因**（两层，都在"环境"里，不在"账号"里）：
 
 ① `Demo/project.yml` 的 `DEVELOPMENT_TEAM` 是**写死的单值**，而同一个仓库在**两套环境**里跑：
-   家里那台 = `UKXWZ3FS84`（`zhenzhi Tang` 个人号）· 本机 = `3GMJYX32U9`（公司号）。git 里只留得下一个值。
+   家里那台 = `YOUR_TEAM_ID`（`〔开发者 A〕` 个人号）· 本机 = `〔公司 team〕`（公司号）。git 里只留得下一个值。
 ② 一台机器能不能签，只取决于**本机**这两样东西，与账号无关：
    - 钥匙串里有没有**该 team 且带私钥**的 `Apple Development` 证书；
    - 该 team 的通配描述文件里**有没有这台设备**。
 
-本机实况：三个开发证书分属 `88D39V32YV` / `YXFC65VYTW` / `3GMJYX32U9`，**没有 `UKXWZ3FS84` 的私钥**；
-且 `UKXWZ3FS84` 通配描述文件覆盖的 6 台设备里是 **另一台** iPhone（`…000A288836FB001C`），不是当前这台。
+本机实况：三个开发证书分属 `〔证书成员 ID〕` / `〔个人 team〕` / `〔公司 team〕`，**没有 `YOUR_TEAM_ID` 的私钥**；
+且 `YOUR_TEAM_ID` 通配描述文件覆盖的 6 台设备里是 **另一台** iPhone（`…000A288836FB001C`），不是当前这台。
 
 **判据**：**报错里出现 team ID 时，先问"这是哪台机器的 team"，别问"账号怎么了"。**
 "签名"是**环境 × 设备 × 证书**三者的交集，缺一不可；账号只是生成证书/描述文件的**上游**，不是构建时的判据。
@@ -1451,9 +1451,9 @@ xcodebuild … -destination 'id=<本机真机 UDID>' DEVELOPMENT_TEAM=<本机 te
 上面说"先验两件事"，容易被读成**证书也要与 `DEVELOPMENT_TEAM` 同 team**。**不必。** 实测：
 
 ```
-签名身份：Apple Development: zhenzhi Tang (7H6TJ2PN25)      ← 证书自己的 team 是 7H6TJ2PN25
-描述文件：iOS Team Provisioning Profile: *                   ← TeamIdentifier = UKXWZ3FS84
-仓库值  ：DEVELOPMENT_TEAM = UKXWZ3FS84
+签名身份：Apple Development: 〔开发者 A〕 (〔证书编号 A〕)      ← 证书自己的 team 是 〔证书编号 A〕
+描述文件：iOS Team Provisioning Profile: *                   ← TeamIdentifier = YOUR_TEAM_ID
+仓库值  ：DEVELOPMENT_TEAM = YOUR_TEAM_ID
 ⇒ BUILD SUCCEEDED · install ✅ · launch ✅ · 真机跑通 ✅
 ```
 
@@ -1483,7 +1483,7 @@ security find-identity -v -p codesigning     # 本机证书的 sha1 在括号里
 **现象**（真机直连宿主机的局域网地址）：
 
 ```
-[mpv/ffmpeg] tcp: Connection to tcp://192.168.2.217:8765 failed: No route to host
+[mpv/ffmpeg] tcp: Connection to tcp://192.0.2.10:8765 failed: No route to host
 ```
 
 **6 毫秒**就返回了。而同一时刻：宿主机防火墙是**关的**、服务确实在 `*:8765` 上 `LISTEN`、

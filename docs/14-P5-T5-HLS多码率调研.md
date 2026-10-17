@@ -133,7 +133,7 @@ hls-bitrate = -99
 推流：ffmpeg -re -stream_loop -1 -i sintel_trailer-720p.mp4 -c copy \
         -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/live
 服务：mediamtx（配置 `paths: all_others:`）
-真机：-directURL rtsp://192.168.2.217:8554/live
+真机：-directURL rtsp://192.0.2.10:8554/live
 ```
 
 mediamtx 侧确认出版：
@@ -146,7 +146,7 @@ INF [RTSP] [session 896b6692] is publishing to path 'live'
 真机侧（每秒一条状态行）：
 
 ```
-[direct] url=rtsp://192.168.2.217:8554/live
+[direct] url=rtsp://192.0.2.10:8554/live
 [status]  0.050 state=idle
 [status]  1.068 state=preparing
 [status]  2.134 state=playing t=0.00/2.09
@@ -202,12 +202,12 @@ INF [RTSP] [session 896b6692] is publishing to path 'live'
 **墙钟走了 214.7 秒，播放位置只走了 0.67 秒** ⇒ **不是日志通道断，是整个 App（含 mpv）被挂起**
 （判据见 `PITFALLS` 的 `P-063`：要用**业务计数值**分"通道断"与"对象停"）。
 
-**服务端一侧独立印证**（真机 = `192.168.2.253`）：
+**服务端一侧独立印证**（真机 = `192.0.2.11`）：
 
 ```
 23:07:34 WAR [RTSP] [session 72ee3138] reader is too slow, discarding 14 frames
-23:07:35 INF [RTSP] [conn 192.168.2.253:59908] closed: terminated
-23:07:35 INF [RTSP] [session 72ee3138] destroyed: write tcp 192.168.2.217:8554->192.168.2.253:59908: i/o timeout
+23:07:35 INF [RTSP] [conn 192.0.2.11:59908] closed: terminated
+23:07:35 INF [RTSP] [session 72ee3138] destroyed: write tcp 192.0.2.10:8554->192.0.2.11:59908: i/o timeout
 ```
 
 客户端 172.1 s（≈23:07:20）→ 服务端 23:07:34 判"读得太慢"，
@@ -294,7 +294,7 @@ ffmpeg -re -stream_loop -1 -i <源> -c copy -f rtsp -rtsp_transport tcp rtsp://1
 为了让它在真机上**能被逐秒读到**，`[status]` 行加了音频摘要 —— 不能靠 `-traceUpdates`，
 它同时打开 mpv verbose，会把 `devicectl --console` 在**第 2 秒**就打爆（`P-058`）。）
 
-**真机实测**（iPhone 16 Pro · `-directURL http://192.168.2.217:8765/master.m3u8 -exerciseTracks`）：
+**真机实测**（iPhone 16 Pro · `-directURL http://192.0.2.10:8765/master.m3u8 -exerciseTracks`）：
 
 ```
 [tracks] 可选档位 3 条 · 清晰度菜单会出现

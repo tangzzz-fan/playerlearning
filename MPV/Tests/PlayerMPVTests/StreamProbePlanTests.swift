@@ -14,7 +14,7 @@ struct StreamProbePlanTests {
     @Test("实时投递的协议 ⇒ 短窗口")
     func testRealtimeSchemesGetShortWindow() throws {
         let realtime = [
-            "rtsp://192.168.2.217:8554/live",
+            "rtsp://192.0.2.10:8554/live",
             "rtsps://cam.local/stream",
             "rtmp://a.example.com/live/x",
             "rtmps://a.example.com/live/x",
@@ -33,7 +33,7 @@ struct StreamProbePlanTests {
     @Test("按需拉取的源 ⇒ 不动窗口")
     func testPullBasedSourcesKeepTheDefaultWindow() {
         let pullBased = [
-            "http://192.168.2.217:8765/sintel_trailer-720p.mp4",
+            "http://192.0.2.10:8765/sintel_trailer-720p.mp4",
             "https://example.com/master.m3u8",
             "file:///tmp/clip.mp4",
         ]
@@ -47,7 +47,7 @@ struct StreamProbePlanTests {
 
     @Test("scheme 大小写不敏感")
     func testSchemeIsCaseInsensitive() throws {
-        let upper = try #require(URL(string: "RTSP://192.168.2.217:8554/live"))
+        let upper = try #require(URL(string: "RTSP://192.0.2.10:8554/live"))
         #expect(
             StreamProbePlan(upper).analyzeduration == StreamProbePlan.realtimeAnalyzeduration,
             "`URL` 原样保留 scheme 大小写 ⇒ 不归一化会让规则静默失效"

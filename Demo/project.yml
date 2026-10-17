@@ -56,7 +56,10 @@ targets:
         # iPad 截图 + iPad 上要说得过去；改成 "1,2" 是一行的事，但要先补 iPad 验证。
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "6.0"
-        DEVELOPMENT_TEAM: UKXWZ3FS84
+        # 填你自己的 Apple Developer Team ID（`security find-identity -v -p codesigning` 可查），
+        # 或用命令行覆盖：xcodebuild … DEVELOPMENT_TEAM=<你的 team>
+        # 留空时 Xcode 走自动签名，前提是本机已登录开发者账号。
+        DEVELOPMENT_TEAM: ""
         CODE_SIGN_STYLE: Automatic
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         MARKETING_VERSION: "1.0.0"
@@ -112,7 +115,10 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.playerstack.app.uitests
         SWIFT_VERSION: "6.0"
-        DEVELOPMENT_TEAM: UKXWZ3FS84
+        # 填你自己的 Apple Developer Team ID（`security find-identity -v -p codesigning` 可查），
+        # 或用命令行覆盖：xcodebuild … DEVELOPMENT_TEAM=<你的 team>
+        # 留空时 Xcode 走自动签名，前提是本机已登录开发者账号。
+        DEVELOPMENT_TEAM: ""
         CODE_SIGN_STYLE: Automatic
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         # ⚠️ **必须显式打开**：xcodegen 不会给 `bundle.ui-testing` target 生成 Info.plist
