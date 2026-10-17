@@ -72,9 +72,14 @@
 | tag | commit | 产物 | sha256（SPM checksum） |
 | --- | --- | --- | --- |
 | `v0.1.0` | `b8398c3` | `Libmpv.xcframework.zip`（40 MB，ios-arm64 + ios-arm64_x86_64-simulator） | `f98a0c3fa47f0a7cc7cb1c2d8160c892c3e584da478862dfa05a3c082caca0d6` |
+| `v0.1.1` | `33630fd` | 同上（**同一个 zip，未重新打包** ⇒ sha256 完全相同） | `f98a0c3fa47f0a7cc7cb1c2d8160c892c3e584da478862dfa05a3c082caca0d6` |
 
 > ⚠️ **`v0.1.0` 的清单仍是 `path:` 形态**（那时产物还在本地）。开源后要用 `url:` 引用，
-> 必须**另打一个 tag** —— 否则消费者读到的还是 `path:` 清单，会失败。详见 [`docs/30`](../docs/30-导出物现状与欠缺.md) §八。
+> 必须用 **`v0.1.1`** —— 否则消费者读到的还是 `path:` 清单，会失败。详见 [`docs/30`](../docs/30-导出物现状与欠缺.md) §八。
+>
+> **`v0.1.1` 相对 `v0.1.0` 没有改产物**（checksum 逐位相同），只改了清单形态与仓库名
+> （`playerlearning` → `playerstack`，因此 identity 也变了）。所以这两个 tag 对应的**二进制源码完全相同**，
+> 变更的只是 SwiftPM 的取用方式。
 >
 > 每个 tag 都要在这张表里加一行。这张表就是"三年后有人来问"的第一处落点。
 
