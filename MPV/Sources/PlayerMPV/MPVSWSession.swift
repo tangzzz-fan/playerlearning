@@ -108,6 +108,14 @@ public final class MPVSWSession {
         }
     }
 
+    /// 当前播放位置（秒）。`time-pos` 是 mpv 的**显示时刻**，字幕就该按它对表 ——
+    /// 用墙钟或帧计数会随缓冲/seek 越漂越远。
+    public func timePosition() -> Double? {
+        var value: Double = 0
+        guard mpv_get_property(handle, "time-pos", MPV_FORMAT_DOUBLE, &value) >= 0 else { return nil }
+        return value.isFinite ? value : nil
+    }
+
     /// 当前该按多大渲染。
     ///
     /// 用 `dwidth`/`dheight` 而**不是** `width`/`height`：后者是**编码**尺寸，

@@ -246,6 +246,26 @@ final class PlayerDemoModel {
             renderOutput?.overlayText = text
             Self.writeToStderr("[render] overlay=\(text)")
         }
+        if let raw = Self.stringArgument("-renderTarget"), let target = MPVRenderOutput.RenderTarget(rawValue: raw) {
+            renderOutput?.renderTarget = target
+            Self.writeToStderr("[render] renderTarget=\(target.rawValue)")
+        }
+        // `-renderSize 640x360`：强制渲染尺寸（调试用）。
+        // 用来把"尺寸/缩放的锅"与"CVPixelBuffer 的锅"分开 —— probe 在真机上
+        // 用 640×360 出得了画，而上屏那条用的是 1205×678。
+        if let raw = Self.stringArgument("-renderSize") {
+            let parts = raw.split(separator: "x").compactMap { Int($0) }
+            if parts.count == 2 {
+                renderOutput?.forcedRenderSize = CGSize(width: parts[0], height: parts[1])
+                Self.writeToStderr("[render] 强制渲染尺寸=\(parts[0])x\(parts[1])")
+            }
+        }
+        // `-renderVerify`：从 drawable 读回一小块像素，证明"画上屏的确实是画面"。
+        // 真机上这是唯一可靠的判据 —— 截图抓不到 CAMetalLayer 的内容（见 `docs/26`）。
+        if ProcessInfo.processInfo.arguments.contains("-renderVerify") {
+            renderOutput?.verifiesOnScreen = true
+            Self.writeToStderr("[render] 上屏取证已开启（每 30 帧读回一次）")
+        }
         #endif
     }
 
@@ -254,6 +274,7 @@ final class PlayerDemoModel {
         guard let output = renderOutput else { return }
         applyRenderOptions()
         note = "render API：\(url.lastPathComponent)"
+        await loadSelfDrawnSubtitle()
         await player.load(PlayerResource(url: url))
         await player.play()
         // 每秒一行 render 侧的状态：帧数 / 尺寸 / 耗时分布。
@@ -261,10 +282,39 @@ final class PlayerDemoModel {
         for _ in 0 ..< 60 {
             try? await Task.sleep(for: .seconds(1))
             let size = output.lastVideoSize
+            let onScreen = output.verifiesOnScreen
+                ? String(format: " 上屏非黑=%.3f", output.lastOnScreenNonBlackRatio)
+                : ""
             Self.writeToStderr(
                 "[render] frames=\(output.presentedFrames) size=\(Int(size.width))x\(Int(size.height))"
-                    + " effect=\(output.effect.rawValue) \(output.timings.summary)"
+                    + " drawable=\(Int(output.drawablePixelSize.width))x\(Int(output.drawablePixelSize.height))"
+                    + " effect=\(output.effect.rawValue)" + onScreen + " \(output.timings.summary)"
             )
+        }
+        #endif
+    }
+
+    /// `-subtitle <srt|ass 的 URL>`：把外挂字幕装成**我们自绘**的那一条路。
+    ///
+    /// 与 mpv 自己画字幕是**两条路**，同时开会让同一句话出现两遍 ——
+    /// 所以这里顺手把 mpv 那条关掉（`sub-visibility`）。这也是这条功能的意义：
+    /// 文本先到我们手上，位置/字号/动效才归我们决定（`docs/26` §七 第 1 条）。
+    private func loadSelfDrawnSubtitle() async {
+        #if os(iOS)
+        guard let subtitleURL = Self.urlArgument("-subtitle") else { return }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: subtitleURL)
+            let document = try SubtitleDocument.parse(data: data, fileName: subtitleURL.lastPathComponent)
+            renderOutput?.subtitleSource = SubtitleOverlaySource(timeline: document.timeline())
+            if player.subtitles.isVisible {
+                await player.toggleSubtitles()
+            }
+            Self.writeToStderr(
+                "[subtitle] 自绘字幕已装载：\(document.cues.count) 条 · \(document.format.rawValue)"
+                    + " · mpv 那条已关闭=\(!player.subtitles.isVisible)"
+            )
+        } catch {
+            Self.writeToStderr("[subtitle] 装载失败：\(error)")
         }
         #endif
     }

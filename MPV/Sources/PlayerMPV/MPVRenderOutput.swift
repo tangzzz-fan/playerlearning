@@ -59,6 +59,40 @@ public final class MPVRenderOutput: CAMetalLayer, VideoOutputProtocol, VideoSurf
     /// 最近一次渲染用的尺寸（像素）。
     public private(set) var lastVideoSize: CGSize = .zero
 
+    /// **上屏取证**：把三层各读回一小块，算非黑像素占比。
+    ///
+    /// 为什么需要它：`presentedFrames` 只证明"`present` 被调用过"，**不证明屏幕上真有画面**。
+    /// 截图能当证据，但它有一个致命弱点 —— **它只回答"最终屏幕上是什么"**，
+    /// 一旦是黑的，你分不清是 mpv 没写、纹理没生成、还是着色器没画。
+    /// 三层读数（`cpu` / `source` / `drawable`）就是为了把这三段拆开。
+    ///
+    /// ⚠️ **采样框取画面中心，不取左上角**。这不是审美选择：本机素材（2.39:1）
+    /// 上下自带黑边，左上角的 96×54 正好落在黑条里 —— 于是"画面正常"会被读成 0.000。
+    /// 这个坑让第一版取证把"真机其实是好的"误判成"真机全黑"，查了六轮（`P-094`）。
+    ///
+    /// 默认关：读回要 `waitUntilCompleted`，是**同步等 GPU**，不该出现在播放路径上。
+    ///
+    /// 打开时会把 `framebufferOnly` 关掉 —— 否则 drawable 的纹理**不允许被读**，
+    /// blit 会静默失败、读回永远是 0.000。
+    public var verifiesOnScreen = false {
+        didSet { framebufferOnly = !verifiesOnScreen }
+    }
+
+    /// 最近一次从 **drawable** 读回的非黑像素占比（`-1` = 读不回来，别当成"黑"）。
+    public private(set) var lastOnScreenNonBlackRatio: Double = 0
+    /// 读回的采样区域尺寸 —— 写进日志，避免"占比变了其实是因为采样框变了"（`P-082` 同族）。
+    public private(set) var onScreenSampleSize = CGSize.zero
+    /// drawable 的真实像素尺寸。**它和 `bounds` 不是一回事**，真机上出问题时先看这个。
+    public private(set) var drawablePixelSize = CGSize.zero
+    /// CPU 侧（mpv 刚写完、还没 unlock）的非黑占比 —— 分辨"mpv 没写"与"写了但 GPU 看不见"。
+    public private(set) var cpuNonBlackRatio: Double = 0
+    /// 这一帧 `CVPixelBuffer` 的真实行宽（`GetBytesPerRow` 会按对齐抬高，不等于 宽 × 4）。
+    public private(set) var cpuStride = 0
+    /// 最近一次 `mpv_render_context_update` 的原始标志位（`MPV_RENDER_UPDATE_FRAME` 是否置位）。
+    public private(set) var updateFlags: UInt64 = 0
+    /// 最近一次 `mpv_render_context_render` 的返回值。
+    public private(set) var lastRenderStatus: Int32 = 0
+
     /// 按什么尺寸渲染（软件后端的成本与**目标像素数**成正比，与源分辨率无关）。
     public enum RenderTarget: String, Sendable {
         /// 按**源码尺寸**渲染，再缩到图层：像素最忠实，代价随源码分辨率线性上涨。
@@ -72,10 +106,33 @@ public final class MPVRenderOutput: CAMetalLayer, VideoOutputProtocol, VideoSurf
         didSet { redrawFlag.set() }
     }
 
+    /// 调试用：**强制**按这个尺寸渲染（不管源码多大、图层多大）。
+    ///
+    /// 它的用途是把两件事分开：「尺寸/缩放的锅」与「CVPixelBuffer 的锅」。
+    /// 真机上 probe 用 640×360 出得了画，而上屏那条用 1205×678 —— 差的就是尺寸。
+    public var forcedRenderSize: CGSize? {
+        didSet { redrawFlag.set() }
+    }
+
     /// 片元效果。切换后需要重画一帧才看得到 —— 调试入口切换时本类会自动请求重画。
     public var effect: VideoEffect = .none {
         didSet { redrawFlag.set() }
     }
+
+    /// **自绘字幕的数据源**（`PlayerCore.SubtitleOverlaySource`）。设了它之后，
+    /// 每帧用 mpv 的 `time-pos` 查一次该显示什么，再交给叠加层去画。
+    ///
+    /// 与 mpv 自己画字幕**会重复**：那条路把字幕烧进帧里，我们这条再画一遍。
+    /// 正式用的时候要么关 mpv 的字幕（`sub-visibility=no`），要么关这条 —— 不能都开。
+    public var subtitleSource: SubtitleOverlaySource? {
+        didSet {
+            liveSubtitleText = nil
+            overlayDirty = true
+            redrawFlag.set()
+        }
+    }
+    /// 上一次真正设进叠加层的文本 —— 用来**只在内容变化时**重建纹理。
+    private var liveSubtitleText: String?
 
     /// 自绘叠加层（**字幕机制的第一版**：由我们画字、合成到帧上，而不是 mpv 画）。
     public var overlayText: String? {
@@ -227,22 +284,32 @@ public final class MPVRenderOutput: CAMetalLayer, VideoOutputProtocol, VideoSurf
         guard let session else { return }
         let flags = session.update()
         let frameAvailable = flags & UInt64(MPV_RENDER_UPDATE_FRAME.rawValue) != 0
+        updateFlags = flags
         let redraw = redrawFlag.take()
         guard force || frameAvailable || updateFlag.take() || redraw else { return }
         if force { _ = updateFlag.take() }
 
+        // 自绘字幕：**按 mpv 的 time-pos 对表**，不是按帧计数、也不是按墙钟。
+        // 只在文本真的变了时才重建叠加层纹理（`overlayText` 的 didSet 会置脏位）。
+        if let subtitleSource, let position = session.timePosition() {
+            let text = subtitleSource.text(at: position)
+            if text != liveSubtitleText {
+                liveSubtitleText = text
+                overlayText = text
+            }
+        }
         guard let size = session.videoSize() else { return }
         lastVideoSize = CGSize(width: size.width, height: size.height)
         guard let drawable = nextDrawable() else { return }
         // 软件后端按"目标尺寸"干活：给它多少像素，它就缩放到多少像素。
         // 于是 4K 源在 1206×678 的图层上只花 1080p 的钱（实测见 `docs/25` §三）。
-        let target = renderTarget == .native ? size : {
+        let target = forcedRenderSize.map { (width: Int($0.width), height: Int($0.height)) } ?? (renderTarget == .native ? size : {
             let scaled = VideoFitRect.scaledSize(
                 content: CGSize(width: size.width, height: size.height),
                 in: CGSize(width: drawable.texture.width, height: drawable.texture.height)
             )
             return (width: Int(scaled.width), height: Int(scaled.height))
-        }()
+        }())
         guard let buffer = buffer(width: target.width, height: target.height) else { return }
 
         let clock = ContinuousClock()
@@ -254,23 +321,52 @@ public final class MPVRenderOutput: CAMetalLayer, VideoOutputProtocol, VideoSurf
         }
         // mpv **直接写进 IOSurface**：没有再经过一个 `[UInt8]` 中转数组，
         // 这是"软件后端"这条路上唯一能省下的那次拷贝。
+        let probeThisFrame = verifiesOnScreen && (presentedFrames + 1) % 30 == 0
+        let probeStride = CVPixelBufferGetBytesPerRow(buffer)
         let status = session.render(
             into: base,
             width: target.width,
             height: target.height,
-            stride: CVPixelBufferGetBytesPerRow(buffer)
+            stride: probeStride
         )
+        lastRenderStatus = status
         let rendered = clock.now
+        if verifiesOnScreen, (presentedFrames + 1) % 30 == 0 {
+            // CPU 侧的读数：**就在 unlock 之前**直接看 mpv 写进这块内存的东西。
+            // 三层读数一起比，才能回答"是谁把画面弄丢了"：
+            //   cpu  = mpv 到底写没写进去（这一层黑 ⇒ mpv 没写）
+            //   source = IOSurface → Metal 纹理这一步通不通
+            //   drawable = 着色器有没有画上去
+            let sampleWidth = min(96, target.width)
+            let sampleHeight = min(54, target.height)
+            cpuNonBlackRatio = Self.nonBlackRatio(
+                base: base,
+                originX: (target.width - sampleWidth) / 2,
+                originY: (target.height - sampleHeight) / 2,
+                width: sampleWidth, height: sampleHeight, stride: probeStride
+            )
+            cpuStride = probeStride
+        }
+        // **先 `unlock` 再建纹理**。理由是按 Apple 的语义：`CVPixelBufferUnlockBaseAddress`
+        // 对 IOSurface 支撑的 buffer 除了解锁，还要把 CPU 写入同步到 GPU 可见处，
+        // 而 `CVMetalTextureCacheCreateTextureFromImage` 一拿到纹理，GPU 就可能立刻开始读。
+        //
+        // ⚠️ 不要把这句读成"顺序反了就会黑屏"。**本机没有测到那个结论**：
+        // 实测（真机 iPhone 16 Pro）两种顺序都能出画。保留这个顺序是因为它符合语义，
+        // 不是因为它修了一个已经观察到的 bug —— 把"预防"写成"修好了什么"就是假归因（`P-083`）。
+        CVPixelBufferUnlockBaseAddress(buffer, [])
         guard status >= 0 else {
-            CVPixelBufferUnlockBaseAddress(buffer, [])
             log("[render] mpv_render_context_render 失败 status=\(status) \(String(cString: mpv_error_string(status)))")
             return
         }
-        let texture = makeTexture(from: buffer, width: target.width, height: target.height)
-        CVPixelBufferUnlockBaseAddress(buffer, [])
-        guard let texture else { return }
+        guard let texture = makeTexture(from: buffer, width: target.width, height: target.height) else { return }
 
-        draw(texture: texture, drawable: drawable, content: CGSize(width: target.width, height: target.height))
+        draw(
+            texture: texture,
+            drawable: drawable,
+            content: CGSize(width: target.width, height: target.height),
+            sampleAfterDraw: verifiesOnScreen && (presentedFrames + 1) % 30 == 0
+        )
         let finished = clock.now
         renderRecorder.record(milliseconds: Self.milliseconds(rendered - started))
         timingRecorder.record(milliseconds: Self.milliseconds(finished - started))
@@ -278,7 +374,7 @@ public final class MPVRenderOutput: CAMetalLayer, VideoOutputProtocol, VideoSurf
         publishTimings()
     }
 
-    private func draw(texture: MTLTexture, drawable: CAMetalDrawable, content: CGSize) {
+    private func draw(texture: MTLTexture, drawable: CAMetalDrawable, content: CGSize, sampleAfterDraw: Bool = false) {
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = drawable.texture
         pass.colorAttachments[0].loadAction = .clear
@@ -319,8 +415,172 @@ public final class MPVRenderOutput: CAMetalLayer, VideoOutputProtocol, VideoSurf
         }
 
         encoder.endEncoding()
+        drawablePixelSize = CGSize(width: drawable.texture.width, height: drawable.texture.height)
+
+        // ⚠️ 读回**必须在这个 command buffer 里、`present` 之前**。
+        // `present` 一调，这张 drawable 就交还给系统了 —— 之后再 blit 读它，
+        // 读到的是未定义的（真机实测：present 之后读恒为全黑，而 source 明明是 0.185）。
+        // 这个错在模拟器上不会显形：那里两者的时序恰好还来得及。
+        var readback: MTLTexture?
+        let width = min(96, drawable.texture.width)
+        let height = min(54, drawable.texture.height)
+        if sampleAfterDraw, width > 0, height > 0 {
+            let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: drawable.texture.pixelFormat, width: width, height: height, mipmapped: false
+            )
+            descriptor.usage = .shaderRead
+            descriptor.storageMode = .shared
+            if let target = metalDevice.makeTexture(descriptor: descriptor),
+               let blit = commandBuffer.makeBlitCommandEncoder() {
+                blit.copy(
+                    from: drawable.texture,
+                    sourceSlice: 0,
+                    sourceLevel: 0,
+                    sourceOrigin: MTLOrigin(
+                        x: (drawable.texture.width - width) / 2,
+                        y: (drawable.texture.height - height) / 2,
+                        z: 0
+                    ),
+                    sourceSize: MTLSize(width: width, height: height, depth: 1),
+                    to: target,
+                    destinationSlice: 0,
+                    destinationLevel: 0,
+                    destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0)
+                )
+                blit.endEncoding()
+                readback = target
+            }
+        }
         commandBuffer.present(drawable)
         commandBuffer.commit()
+        if let readback {
+            commandBuffer.waitUntilCompleted()
+            verifyOnScreen(drawableReadback: readback, source: texture, width: width, height: height)
+        }
+    }
+
+    /// 把 drawable 的左上角一小块拷到可读纹理，算**非黑像素占比**。
+    ///
+    /// 这块区域是按**像素**取的，不是按比例 —— 于是同一段素材、同一套着色器下，
+    /// 模拟器与真机的数字可以直接比（`P-082`：计数型判据必须连口径一起说）。
+    /// 采样框 96×54 覆盖 16:9 的一角；2.39:1 的素材在那里可能是黑边，
+    /// 所以判据是 **> 0**（有内容）而不是"必须多亮" —— 判据要比事实弱一档（`P-088` 同族）。
+    private func verifyOnScreen(drawableReadback: MTLTexture, source: MTLTexture, width: Int, height: Int) {
+        // 三个读数一起打，回答"是谁把画面弄丢了"：
+        //   cpu   = mpv 到底写没写进那块内存（在 unlock 之前直接数）
+        //   source = IOSurface → Metal 纹理通不通
+        //   drawable = 着色器有没有画上去
+        let sourceRatio = readBack(
+            source,
+            originX: max(0, (source.width - width) / 2),
+            originY: max(0, (source.height - height) / 2),
+            width: width, height: height
+        )
+        let drawableRatio = Self.nonBlackRatio(texture: drawableReadback)
+
+        lastOnScreenNonBlackRatio = drawableRatio
+        onScreenSampleSize = CGSize(width: width, height: height)
+        log(
+            "[render] 上屏取证 cpu非黑=\(Self.ratioText(cpuNonBlackRatio))"
+                + " source非黑=\(Self.ratioText(sourceRatio))"
+                + " drawable非黑=\(Self.ratioText(drawableRatio))"
+
+                + " flags=\(updateFlags) status=\(lastRenderStatus)"
+                + " 采样=\(width)x\(height) stride=\(cpuStride)"
+                + " drawable=\(Int(drawablePixelSize.width))x\(Int(drawablePixelSize.height))"
+        )
+    }
+
+    /// 直接数一块 CPU 内存里的非黑像素（BGRA，按真实 `stride` 跳过行尾对齐填充）。
+    private static func nonBlackRatio(
+        base: UnsafeMutableRawPointer, originX: Int = 0, originY: Int = 0,
+        width: Int, height: Int, stride: Int
+    ) -> Double {
+        guard width > 0, height > 0, stride >= width * 4 else { return -1 }
+        let bytes = base.assumingMemoryBound(to: UInt8.self)
+        var nonBlack = 0
+        for row in 0 ..< height {
+            let rowStart = (originY + row) * stride + originX * 4
+            for column in 0 ..< width {
+                let index = rowStart + column * 4
+                if bytes[index] > 12 || bytes[index + 1] > 12 || bytes[index + 2] > 12 {
+                    nonBlack += 1
+                }
+            }
+        }
+        return Double(nonBlack) / Double(width * height)
+    }
+
+    private static func ratioText(_ value: Double?) -> String {
+        value.map { String(format: "%.3f", $0) } ?? "n/a"
+    }
+
+    /// 把一张纹理的左上角拷进可读纹理，算**非黑像素占比**。`nil` = 拷不出来（不是"黑"）。
+    private static func nonBlackRatio(texture: MTLTexture) -> Double {
+        let bytesPerRow = texture.width * 4
+        var bytes = [UInt8](repeating: 0, count: bytesPerRow * texture.height)
+        bytes.withUnsafeMutableBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            texture.getBytes(
+                base, bytesPerRow: bytesPerRow,
+                from: MTLRegionMake2D(0, 0, texture.width, texture.height), mipmapLevel: 0
+            )
+        }
+        var nonBlack = 0
+        for index in stride(from: 0, to: bytes.count, by: 4) {
+            if bytes[index] > 12 || bytes[index + 1] > 12 || bytes[index + 2] > 12 {
+                nonBlack += 1
+            }
+        }
+        return Double(nonBlack) / Double(texture.width * texture.height)
+    }
+
+    private func readBack(_ texture: MTLTexture, originX: Int = 0, originY: Int = 0, width: Int, height: Int) -> Double? {
+        guard width > 0, height > 0 else { return nil }
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: texture.pixelFormat,
+            width: width,
+            height: height,
+            mipmapped: false
+        )
+        descriptor.usage = .shaderRead
+        // `.shared` 是真机上唯一能直接 `getBytes` 的存储模式（`.managed` 只有 macOS 有）。
+        descriptor.storageMode = .shared
+        guard let target = metalDevice.makeTexture(descriptor: descriptor),
+              let commandBuffer = queue.makeCommandBuffer(),
+              let blit = commandBuffer.makeBlitCommandEncoder()
+        else { return nil }
+        blit.copy(
+            from: texture,
+            sourceSlice: 0,
+            sourceLevel: 0,
+            sourceOrigin: MTLOrigin(x: originX, y: originY, z: 0),
+            sourceSize: MTLSize(width: width, height: height, depth: 1),
+            to: target,
+            destinationSlice: 0,
+            destinationLevel: 0,
+            destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0)
+        )
+        blit.endEncoding()
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+
+        let bytesPerRow = width * 4
+        var bytes = [UInt8](repeating: 0, count: bytesPerRow * height)
+        target.getBytes(
+            &bytes,
+            bytesPerRow: bytesPerRow,
+            from: MTLRegionMake2D(0, 0, width, height),
+            mipmapLevel: 0
+        )
+        var nonBlack = 0
+        // BGRA：任意分量 > 12 就算"非黑"。阈值 12 与取帧探针的诊断口径一致（不是随手挑的）。
+        for index in stride(from: 0, to: bytes.count, by: 4) {
+            if bytes[index] > 12 || bytes[index + 1] > 12 || bytes[index + 2] > 12 {
+                nonBlack += 1
+            }
+        }
+        return Double(nonBlack) / Double(width * height)
     }
 
     // MARK: - 资源
