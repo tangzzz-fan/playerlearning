@@ -75,6 +75,8 @@ final class PlayerDemoModel {
         }
         if let rounds = soakRounds {
             await soakTest(rounds: rounds)
+        } else if let probeURL = renderProbeURL {
+            await runRenderProbe(probeURL)
         } else if ProcessInfo.processInfo.arguments.contains("-exerciseControls") {
             await exerciseControls()
         } else if ProcessInfo.processInfo.arguments.contains("-exerciseFinish") {
@@ -148,8 +150,42 @@ final class PlayerDemoModel {
         #endif
     }
 
-    /// `-headers "X-A: 1,X-B: 2"`：给网络播放注入请求头（`P5-T4`）。
+    /// `-renderProbe <url>`：**render API 取帧取证**（`P4-T3` 触发条件之一的第一步）。
     ///
+    /// 与 `-directURL` 是两条完全不同的路：那条走 `wid` 嵌入，帧在播放器内部；
+    /// 这条用 `MPV_RENDER_API_TYPE_SW` 把像素**取到我们手里**，再落一张 PNG 作证据。
+    private var renderProbeURL: URL? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-renderProbe"), index + 1 < arguments.count else { return nil }
+        return URL(string: arguments[index + 1])
+    }
+
+    private func runRenderProbe(_ url: URL) async {
+        #if os(iOS)
+        let probe: MPVRenderProbe
+        do {
+            probe = try MPVRenderProbe { line in Self.writeToStderr(line) }
+        } catch {
+            Self.writeToStderr("[render] 建句柄失败：\(error)")
+            return
+        }
+        do {
+            try probe.createRenderContext()
+            probe.load(url)
+            let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let png = documents.appendingPathComponent("render-probe.png")
+            let result = try probe.captureFrame(pngURL: png)
+            Self.writeToStderr(
+                "[render] api=sw \(result.width)x\(result.height) 第 \(result.renders) 次渲染命中"
+                    + " 非黑占比=\(String(format: "%.3f", result.bestNonBlackRatio)) png=\(result.pngPath ?? "未落盘")"
+            )
+        } catch {
+            Self.writeToStderr("[render] 失败：\(error) · \(probe.diagnostics())")
+        }
+        #endif
+    }
+
+    /// `-headers "X-A: 1,X-B: 2"`：给网络播放注入请求头（`P5-T4`）。
     /// 形态刻意与 mpv 的 `http-header-fields` 一致（`Key: Value`、逗号分隔）——
     /// 这样"命令行里写的"和"实际发出去的"是**同一份文本**，取证时不需要在脑子里翻译一遍。
     private var headerFields: [String: String] {

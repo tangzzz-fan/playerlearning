@@ -2305,6 +2305,61 @@ runner exited with code 74 before establishing connection
 
 ---
 
+## P-089 · `withCString` 的指针被带出闭包 —— 悬空指针**不保证崩**
+
+**现象**：接 render API 取帧（`docs/24`），`loadfile` 之后 `path` 属性**恒为 nil**，
+`duration` / `width` 也全是 nil，于是"8 秒取不到非黑帧"。
+表象像极了"render API 不支持"或"网络不通"。
+
+**真因**：这一行
+
+```swift
+var args: [UnsafePointer<CChar>?] = ["loadfile".withCString { $0 }, path, nil]
+```
+
+`withCString` 闭包返回后，那段 C 字符串的缓冲区就**已经失效**；
+数组里留下的是**悬空指针**。`mpv_command` 读到的可能是垃圾，也可能是空串 —— 
+**它不保证崩**，只保证"行为未定义"。
+
+**正确写法**：嵌套，让指针活到调用结束。
+
+```swift
+"loadfile".withCString { command in
+    url.absoluteString.withCString { path in
+        var args: [UnsafePointer<CChar>?] = [command, path, nil]
+        _ = mpv_command(handle, &args)
+    }
+}
+```
+
+**它值钱的地方**：错误**没有报错**。要不是把 `path` 打出来，会一直往
+"render API / 网络 / 解码"上找。⇒ **凡是"某条 C 调用没生效、又没报错"，
+先怀疑字符串生命周期。**
+
+**判据**：写成 `X.withCString { $0 }` **放进数组/结构体里带走**的，一律视为错。
+
+---
+
+## P-090 · `(cmd &)` 起的本地服务会被会话回收 ⇒ "服务端"变成假线索
+
+**现象**：为了验 HLS 起了 `mediamtx`、为了验点播起了 `serve-range.py`，
+命令里写 `(… &)`，**当时**能通（`curl` 200、播放器也连上了）。
+但**下一次工具调用**时，端口已经没人监听：播放器报
+`tcp: Connection to tcp://127.0.0.1:8768 failed: Connection refused`。
+
+**它骗人的方式**：错误出现在**被测对象**的日志里（播放器说"连不上"），
+于是第一反应是"鉴权/URL/网络配置不对"。本轮为此在白名单、cookie、302 上
+白折腾了一轮 —— 真正的原因是**服务早被回收了**。
+
+**规矩**：**长跑的服务一律用"后台任务"方式起**（能拿到句柄、能被显式停止），
+不要用 `( … & )` 塞给一次性会话；并在**每次用到它之前**先探一下
+（`curl -o /dev/null -w '%{http_code}'`），别假设它还活着。
+
+**判据**：连不上时**先探端口**，再怀疑协议。同族：`P-087`（先看有没有 `Test Case` 行，
+分清"产品挂"和"通道挂"）—— 两条都是**先证明被测对象之前的那一段是通的**。
+
+---
+
 > ### 与既有条目同源、故不重复展开的（仅登记映射，便于日后合并检索）
 >
 > | 其他项目的条目 | 本项目已有 |
