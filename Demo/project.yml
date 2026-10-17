@@ -8,10 +8,8 @@ options:
 packages:
   PlayerStack:
     path: ..
-  # libmpv 适配器是**独立包**（仅 iOS 编译）⇒ Demo 必须显式依赖它，
-  # 否则端到端到不了"真画面"（`P2-T10`；根包不引用 libmpv 是刻意约束，见 docs/03）。
-  PlayerMPV:
-    path: ../MPV
+  # libmpv 适配器（`PlayerMPV`）现在是**根包的一个 product**，不再是独立子包 ——
+  # SPM 的 `url:` 依赖只读仓库根清单，子目录包对外部消费者不可见（`docs/30` A1）。
 targets:
   PlayerStackDemo:
     type: application
@@ -23,7 +21,7 @@ targets:
         product: PlayerCore
       - package: PlayerStack
         product: PlayerUI
-      - package: PlayerMPV
+      - package: PlayerStack
         product: PlayerMPV
     info:
       path: Info.plist
@@ -74,7 +72,7 @@ targets:
         product: PlayerCore
       - package: PlayerStack
         product: PlayerUI
-      - package: PlayerMPV
+      - package: PlayerStack
         product: PlayerMPV
     info:
       # ⚠️ **两个 target 不能共用同一个 `Info.plist` 路径**：xcodegen 会**都往同一个文件写**，
