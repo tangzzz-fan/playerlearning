@@ -21,6 +21,11 @@ public struct PlayerControlBar: View {
     private let duration: Double
     private let progress: Double
     private let canScrub: Bool
+    /// 这条时间轴是不是直播。为真时**整条进度条消失**，时间位置换成 LIVE 徽标。
+    ///
+    /// 不是"把百分比画得保守一点"：直播的 `progress` 分母是**滑动窗口末端**，
+    /// 它恒在 0.9 以上抖动（`docs/19` §4.2 实测 0.53–0.96）—— 画出来就是在骗人。
+    private let isLive: Bool
     /// 播放控制是否可用（= 已经加载过文件）。
     ///
     /// 未加载时 `play()` / `pause()` / 字幕命令在内核层都是**静默 return**
@@ -69,6 +74,7 @@ public struct PlayerControlBar: View {
         selectedSubtitleTrackID: Int64?,
         subtitleDelay: Double,
         videoTracks: PlayerVideoTrackState = PlayerVideoTrackState(),
+        isLive: Bool = false,
         onTogglePlay: @escaping () -> Void,
         onScrubBegan: @escaping () -> Void,
         onScrubChanged: @escaping (Double) -> Void,
@@ -94,6 +100,7 @@ public struct PlayerControlBar: View {
         self.selectedSubtitleTrackID = selectedSubtitleTrackID
         self.subtitleDelay = subtitleDelay
         self.videoTracks = videoTracks
+        self.isLive = isLive
         self.onTogglePlay = onTogglePlay
         self.onScrubBegan = onScrubBegan
         self.onScrubChanged = onScrubChanged
@@ -109,14 +116,16 @@ public struct PlayerControlBar: View {
 
     public var body: some View {
         VStack(spacing: 2) {
-            PlayerSlider(
-                progress: progress,
-                isEnabled: canScrub,
-                onScrubBegan: onScrubBegan,
-                onScrubChanged: onScrubChanged,
-                onScrubEnded: onScrubEnded
-            )
-            .padding(.horizontal, 12)
+            if !isLive {
+                PlayerSlider(
+                    progress: progress,
+                    isEnabled: canScrub,
+                    onScrubBegan: onScrubBegan,
+                    onScrubChanged: onScrubChanged,
+                    onScrubEnded: onScrubEnded
+                )
+                .padding(.horizontal, 12)
+            }
 
             HStack(spacing: 4) {
                 iconButton(
@@ -127,19 +136,23 @@ public struct PlayerControlBar: View {
                     onTogglePlay()
                 }
 
-                Text(Self.clock(displayTime))
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.white)
-                    .accessibilityIdentifier("player.currentTime")
+                if isLive {
+                    liveBadge
+                } else {
+                    Text(Self.clock(displayTime))
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(.white)
+                        .accessibilityIdentifier("player.currentTime")
 
-                Text("/")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.4))
+                    Text("/")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.4))
 
-                Text(Self.clock(duration))
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.6))
-                    .accessibilityIdentifier("player.duration")
+                    Text(Self.clock(duration))
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.6))
+                        .accessibilityIdentifier("player.duration")
+                }
 
                 Spacer(minLength: 4)
 
@@ -169,6 +182,25 @@ public struct PlayerControlBar: View {
                 endPoint: .bottom
             )
         )
+    }
+
+    /// 直播徽标：红点 + `LIVE`，占据原「当前时间 / 总时长」的位置。
+    ///
+    /// 红点是**这一屏唯一带颜色的元素**（其余全是白/灰）—— 直播与点播的区别
+    /// 必须一眼看得出来，否则用户会去找那条不存在的进度条。
+    private var liveBadge: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(.red)
+                .frame(width: 7, height: 7)
+            Text("LIVE")
+                .font(.caption.weight(.heavy))
+                .foregroundStyle(.white)
+        }
+        .padding(.horizontal, 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("player.live")
+        .accessibilityLabel("直播")
     }
 
     /// 统一的图标按钮：**44×44 + contentShape**。

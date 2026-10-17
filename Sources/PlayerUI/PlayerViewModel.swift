@@ -15,6 +15,12 @@ public final class PlayerViewModel {
     public private(set) var state: PlayerState = .idle
     public private(set) var currentTime: Double = 0
     public private(set) var duration: Double = 0
+    /// 这条时间轴是不是直播。
+    ///
+    /// **界面拿它决定"要不要画进度条"**：直播的 `progress` 没有意义
+    /// （`docs/19` §4.2 实测它恒在 0.9 以上抖动 —— 分母是滑动窗口末端）。
+    /// 判定规则在 `PlayerLiveModel`（RTSP 的 duration 恒 0；HLS 直播的 duration 在不断增长）。
+    public private(set) var isLive = false
     public private(set) var naturalSize: CGSize = .zero
     public private(set) var audio = PlayerAudioState()
     public private(set) var isBuffering = false
@@ -318,6 +324,7 @@ public final class PlayerViewModel {
         case .timeChanged(let time):
             currentTime = time.currentTime
             duration = time.duration
+            isLive = time.isLive
         case .bufferingChanged(let flag):
             isBuffering = flag
         case .videoSizeChanged(let size):

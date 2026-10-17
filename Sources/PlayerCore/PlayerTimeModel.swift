@@ -7,6 +7,7 @@ public struct PlayerTimeModel: Sendable {
     public private(set) var duration: Double
 
     private var lastPublishedTime: Double?
+    private var live = PlayerLiveModel()
 
     public init(interval: Double = PlayerTimeModel.defaultInterval, duration: Double = 0) {
         self.interval = Self.normalizedInterval(interval)
@@ -14,14 +15,27 @@ public struct PlayerTimeModel: Sendable {
         self.duration = Self.normalizedDuration(duration)
     }
 
+    public var isLive: Bool { live.isLive }
+
+    /// 换文件时把直播判定清零。
+    ///
+    /// **只清判定、不动 `currentTime` / `duration`**：那两项由新资源自己的
+    /// `durationChanged` 覆盖，而`isLive` 一旦为真就**粘住**（直播不会变回点播，
+    /// 这是判定规则的一半）—— 不清的话，先播直播再开本地文件，VOD 也会显示 LIVE。
+    public mutating func resetLiveDetection() {
+        live = PlayerLiveModel()
+    }
+
     @discardableResult
     public mutating func apply(_ event: PlayerKernelEvent) -> PlayerTimeUpdate? {
         switch event {
         case .currentTimeChanged(let seconds):
             currentTime = seconds
+            live.observe(duration: duration, currentTime: currentTime)
             return publishIfDue()
         case .durationChanged(let seconds):
             duration = Self.normalizedDuration(seconds)
+            live.observe(duration: duration, currentTime: currentTime)
             return publish()
         case .stateChanged, .bufferingChanged, .videoSizeChanged, .audioChanged, .subtitlesChanged,
              .videoTracksChanged:
@@ -77,7 +91,7 @@ public struct PlayerTimeModel: Sendable {
 
     private mutating func publish() -> PlayerTimeUpdate {
         lastPublishedTime = currentTime
-        return PlayerTimeUpdate(currentTime: currentTime, duration: duration)
+        return PlayerTimeUpdate(currentTime: currentTime, duration: duration, isLive: live.isLive)
     }
 
     private static func normalizedInterval(_ seconds: Double) -> Double {

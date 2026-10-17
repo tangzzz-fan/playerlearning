@@ -117,6 +117,7 @@ public struct PlayerScreenView: View {
                 selectedSubtitleTrackID: model.subtitles.selectedTrackID,
                 subtitleDelay: model.subtitles.delay,
                 videoTracks: model.videoTracks,
+                isLive: model.isLive,
                 onTogglePlay: { Task { await model.togglePlayPause() } },
                 onScrubBegan: { model.beginScrub() },
                 onScrubChanged: { model.updateScrub(fraction: $0) },
@@ -181,6 +182,9 @@ public struct PlayerScreenView: View {
         // 与前面的「画面 1280×720」重复，写两遍只会让状态行变长、反而更难读。
         if model.videoTracks.hasAlternatives { text += " · \(model.videoTracks.label)" }
         if let note = model.subtitleNote { text += " · \(note)" }
+        // 「直播」写进状态行是**为了可核对**：控制条上的 LIVE 徽标只能靠看图确认，
+        // 而这一行在端到端脚本与 `xcodebuild` 日志里都读得到。
+        if model.isLive { text += " · 直播" }
         if model.isBuffering { text += " · 缓冲中" }
         return text
     }

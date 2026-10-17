@@ -51,6 +51,7 @@ public actor PlayerController {
     }
 
     public func load(_ resource: PlayerResource) async throws {
+        time.resetLiveDetection()
         try await kernel.load(resource)
     }
 

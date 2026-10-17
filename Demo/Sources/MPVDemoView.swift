@@ -321,6 +321,7 @@ final class PlayerDemoModel {
         let progress = String(format: "%.3f", player.progress)
         var line = "state=\(player.state) t=\(time) progress=\(progress) buffering=\(player.isBuffering)"
             + " canPlay=\(player.canPlay) canStop=\(player.canStop)"
+            + " live=\(player.isLive)"
             + " · \(Self.audioSummary(player))"
         // 清晰度只在**真的有多档**时才上这一行：单码率下它与前面的「画面 W×H」是同一件事，
         // 写两遍只会让状态行更长得更难读（与状态行的显示规则保持一致）。

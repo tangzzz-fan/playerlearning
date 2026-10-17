@@ -2215,6 +2215,91 @@ fi
 
 ---
 
+## P-086 · 脚本示例里的双横线参数被原样透传 ⇒ xcodebuild 报 `invalid option`
+
+**现象**：照技能文档抄 `ios-run.sh test … --only-testing FooUITests`，得到
+
+```
+xcodebuild: error: invalid option '--only-testing'
+```
+
+退出码 **64**，并打出整页 usage —— 而脚本自己判定为"**没有明确结论**"（它只匹配成功/失败签名，
+用法错误两者都不是）。
+
+**根因**：`xcodebuild` 的测试过滤参数是**单横线** `-only-testing:<Target>/<Class>`。
+技能脚本对未识别参数**原样透传**（这是它支持"任意 xcodebuild 参数"的方式），
+于是文档示例里的 `--` 原封不动进了 xcodebuild。**文档的示例写法 ≠ 参数真名。**
+
+**处置**：用单横线 —— `-only-testing:PlayerStackDemoUITests`。
+
+**防再犯**：**看到退出码 64 + 整页 usage，先怀疑参数名，别怀疑工程**。
+判据：usage 里搜那个参数；`grep -- '--only-testing'` 搜不到它，就说明是笔误。
+同族：`P-028`（工具语义与直觉不一致）—— 那条是 grep，这条是 xcodebuild 的横线数。
+
+---
+
+## P-087 · 真机 UI 测试失败在 runner bootstrap：**先分清"产品挂"还是"通道挂"**
+
+**现象**：真机跑 XCUITest，编译与安装都成功、签名正常、runner 也打出了 `Running tests...`，
+18 秒后失败：
+
+```
+[DTXConnection] Connection peer refused channel request for
+  "dtxproxy:XCTestDriverInterface:XCTestManager_IDEInterface"; channel canceled
+[Default] Exiting due to IDE disconnection.
+…
+runner exited with code 74 before establishing connection
+```
+
+**它最容易骗人的地方**：`TEST FAILED` 看起来跟"用例断言失败"一模一样，
+但**一条用例都没开始**（日志里没有任何 `Test Case` 行）。⇒ 这是**通道没建立**，
+不是产品行为错。把它当"真机不过"写进报告，等于给产品栽一条不存在的缺陷。
+
+**处置顺序**（本次四次才收口）：
+1. 加 `dangerouslyDisableSandbox` 重跑 —— **先排除宿主沙箱**（铁律 0）；
+2. `test-without-building` 重跑 —— 排除重复安装造成的竞态；
+3. 两者都同签名 ⇒ **定位到设备侧**：真机需开「**设置 → 开发者 → Enable UI Automation**」
+   （命令行跑不会像 Xcode 那样弹提示）、且**设备不能锁屏**。
+
+**判据**：日志里**有没有 `Test Case` 行**。有 ⇒ 产品/用例问题；没有 ⇒ 通道问题，
+**不许写成"真机测了、没过"**。同族：`P-065`（汇总行有几份就报几份）—— 那条是"读少了"，
+这条是"读错了对象"。
+
+---
+
+## P-088 · 判据建立在"自己文档里的一句话"上，而那句话是错的
+
+**现象**：做 `P6-T6`（直播时间轴）时，判据的第一版按
+「RTSP 直播的 `duration` 是**未知/0**、HLS 直播是滑动窗口末端」设计 —— 这条来自 `docs/19` §4.1。
+端到端一跑，**判据一次都没触发**，日志里从头到尾没有 `live=true`。
+
+**实测**（RTSP 推流 + 模拟器）：
+
+```
+[status]  1.663 state=playing t=0.00/1.07 progress=0.000
+[status]  5.784 state=playing t=4.46/5.21 progress=0.855
+[status] 13.979 state=playing t=11.96/13.43 progress=0.890
+```
+
+分母从 3.14 一路涨到 13.43 ⇒ **不是 0，也不是固定值**，而是"已推流到的位置"
+—— 与**同一仓库** [`docs/14`](14-P5-T5-HLS多码率调研.md) L164 的说法一致。
+
+**根因有两层**：
+1. `docs/19` 那句话**没标测量条件**（哪条流、什么时候取的样），于是它读起来像一条事实；
+2. 它与 `docs/14` **互相矛盾**，而两份文档都没有交叉引用对方 ⇒ 矛盾长期没被发现。
+
+**处置**：更正 `docs/19` §4.1，并把更正**留在原地**（原文 + 实测数据 + 指向 `docs/14`）。
+
+**防再犯**：写判据要用到"某组件在某种输入下会给出什么值"时，**先跑一次把它量出来**，
+拿文档当"待验证的线索"，不当输入。判据：**这条事实有没有一个可以当场执行的命令？**
+没有 ⇒ 它还不是事实。
+
+**同族**：`P-073`（默认值/参数值必须实测，不能从上游手册推）—— 那条防的是**外部手册**，
+这条防的是**自己写的东西**。自己的文档会错，而且错得更难发现，因为它带着"我们量过"的可信感。
+`P-084` 是它的近亲（引用只核文件在不在，没核那一节里的事对不对）。
+
+---
+
 > ### 与既有条目同源、故不重复展开的（仅登记映射，便于日后合并检索）
 >
 > | 其他项目的条目 | 本项目已有 |
