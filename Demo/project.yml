@@ -29,6 +29,10 @@ targets:
       path: Info.plist
       properties:
         CFBundleDisplayName: PlayerStack
+        # 版本号**只有一个源**（下面的 MARKETING_VERSION / CURRENT_PROJECT_VERSION）——
+        # 写死在这里会出现"改了一处、另一处没改"的经典不一致（`P-085` 同族）。
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -41,14 +45,25 @@ targets:
         #    这**不只是演示需要**：局域网 NAS / 自建 HTTP 源是播放器的常见来源，
         #    产品在第一次做局域网点播时同样必须有它。
         NSLocalNetworkUsageDescription: 用于播放局域网内的视频源（NAS / 自建 HTTP 服务器）。
+        # 导出合规：App 只用系统 TLS（HTTPS / TLS 直播），不含自研或非豁免加密 ⇒
+        # 声明 false 可免掉每次上传都手工回答"是否使用加密"（答错会被要求补材料）。
+        ITSAppUsesNonExemptEncryption: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.playerstack.demo
-        TARGETED_DEVICE_FAMILY: "1,2"
+        # 上架用的正式 bundle id（`docs/23`）：App Store 上**首次上传后不可更改**，
+        # 所以别再用带 `.demo` 的临时值。
+        PRODUCT_BUNDLE_IDENTIFIER: com.playerstack.app
+        # 首版**只上 iPhone**（`TARGETED_DEVICE_FAMILY: "1"`）。
+        # 原因不是偷懒：iPad 布局从未验证过，而声明支持 iPad 会让 App Store 要求
+        # iPad 截图 + iPad 上要说得过去；改成 "1,2" 是一行的事，但要先补 iPad 验证。
+        TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "6.0"
         DEVELOPMENT_TEAM: UKXWZ3FS84
         CODE_SIGN_STYLE: Automatic
         ENABLE_USER_SCRIPT_SANDBOXING: NO
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
   PlayerStackDemo-macOS:
     type: application
     platform: macOS
@@ -72,13 +87,18 @@ targets:
       properties:
         CFBundleDisplayName: PlayerStack
         LSMinimumSystemVersion: "14.0"
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.playerstack.demo
+        PRODUCT_BUNDLE_IDENTIFIER: com.playerstack.app
         SWIFT_VERSION: "6.0"
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_ENTITLEMENTS: ""
         ENABLE_USER_SCRIPT_SANDBOXING: NO
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
   # ⚠️ UI 自动化**刻意用 XCTest**：`XCUIApplication` 在 Swift Testing 里没有等价能力 ——
   #    这是工具边界，不是"忘了迁移"（先例：`docs/03` L457–458 · `docs/11` L41–45）。
   # 2026-10-16 恢复：此前随自动门禁一并移除（`docs/03` L440–442），
@@ -92,7 +112,7 @@ targets:
       - target: PlayerStackDemo
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.playerstack.demo.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: com.playerstack.app.uitests
         SWIFT_VERSION: "6.0"
         DEVELOPMENT_TEAM: UKXWZ3FS84
         CODE_SIGN_STYLE: Automatic

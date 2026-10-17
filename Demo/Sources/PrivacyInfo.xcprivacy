@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 不收集任何数据、不做跟踪：App 不发遥测、无账号、无广告 SDK。 -->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+
+	<!--
+	  需申报原因的 API（Required Reason APIs）。
+
+	  这两项不是"猜"的：从产物 MPV/Library/Libmpv.xcframework/ios-arm64/Libmpv.framework/Libmpv
+	  的未定义符号里量出来（nm -u），命中 4 个：
+	    _stat · _fstat → 文件时间戳（FileTimestamp）
+	    _mach_absolute_time · _mach_continuous_time → 计时（SystemBootTime）
+
+	  同一把尺子量过、确认**不存在**的：_statvfs（磁盘空间）、_NSUserDefaults /
+	  _CFPreferencesCopyAppValue（UserDefaults）—— 所以那两类不申报，不是漏了。
+	-->
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<!-- 读取用户选中的媒体文件 / 下载到容器内的样例文件的属性（大小、时间戳），用于判断可否 seek 与缓存有效性 -->
+				<string>C617.1</string>
+				<string>3B52.1</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<!-- 播放时钟：按单调时间推进音画同步，不依赖墙上时钟（改系统时间不会让播放跳变） -->
+				<string>35F9.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
