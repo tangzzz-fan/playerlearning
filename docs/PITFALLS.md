@@ -2470,6 +2470,36 @@ error: sending main actor-isolated 'output' to actor-isolated initializer 'init(
 
 ---
 
+## P-096 · 条件编译会把模块编成**空的**：`import` 成功 ≠ 有东西可用
+
+**现象**：验证"这个包能不能被别的项目引"，在 macOS 上 `swift build` ⇒ `Build complete! (40.06 秒)`，
+以为通了。**其实什么都没验证到。**
+
+真正的链条：
+
+| 环 | 事实 | 出处 |
+| --- | --- | --- |
+| ① | `Libmpv.xcframework` 只有 `ios-arm64` 与 `ios-arm64_x86_64-simulator` 两个 slice，**无 macOS** | `PlistBuddy -c "Print :AvailableLibraries"` |
+| ② | `MPV/Package.swift` 里 `Libmpv` 用 `.when(platforms: [.iOS])` ⇒ macOS 不引入 | 清单原文 |
+| ③ | `MPVKernel.swift` **整份文件**（L1–L956）被 `#if canImport(Libmpv)` 包住 | `grep -n "#if" MPVKernel.swift` ⇒ 只有 L1 与 L956 |
+| ④ | ⇒ macOS 上 `canImport(Libmpv)` 为 false ⇒ **整个适配器被编译掉** | ③ + ② |
+
+**结果不是崩，是空模块**：`import PlayerMPV` 能过，`public` 类型一个也不存在。
+编译期安静，运行期什么都调不到 —— 这是最难发现的一类失败：**它不出错，它让你以为有了。**
+
+**判据修正**：判断"跨平台可用"时，
+- ❌ `swift build` / `import` 成功
+- ✅ 在**目标平台**上真正编出使用方代码：`xcodebuild -destination 'generic/platform=iOS' … build`
+- ✅ 再加一条反向自查：产物 `Info.plist` 里到底有没有那个平台的 slice
+
+**同源**：与 `P-094` 同一类病 —— **判据本身选错了，于是一直在解释假象**。
+
+**附带复验**（此前记为"未复验"，2026-10-17 补）：`swift build` / `swift package dump-package`
+在宿主会话里会撞 `sandbox-exec: sandbox_apply: Operation not permitted`（SPM 给 manifest 编译套的沙盒），
+**加 `--disable-sandbox` 即通过**；`xcodebuild` 直连仍需 `OTHER_SWIFT_FLAGS=-disable-sandbox`（`P-024`）。
+
+---
+
 > ### 与既有条目同源、故不重复展开的（仅登记映射，便于日后合并检索）
 >
 > | 其他项目的条目 | 本项目已有 |
