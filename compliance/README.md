@@ -22,6 +22,38 @@
 > 它把"可替换"的范围收敛到**一个文件** —— 用户换掉 `Libmpv` 就等于换掉整条解码链，
 > 不必逐个换 20+ 个库（`spike/p0-t5b-lgpl-dynamic-build/README.md` §2.1）。
 
+### 为什么是 2.1，而不是 3.0
+
+上游的许可是 `LGPL-2.1 **or later**`。"or later" 是**授权方给接收方的选项**，
+不是接收方的义务 ⇒ 我们选 2.1 是行使这项选项，**不构成"降级"或"倒退"**。
+
+| 事实 | 值 | 怎么核 |
+| --- | --- | --- |
+| 产物自报的许可 | **7 个 FFmpeg 组件全部** `LGPL version 2.1 or later` | `strings -a …/Libmpv \| grep "license: LGPL" \| sort` |
+| 有无 v3 痕迹 | **0** | `strings -a …/Libmpv \| grep -ci "gpl version 3"` |
+| 上游 MPVKit 原本选的是 v3 | `BuildFFMPEG.arguments` 里硬写 `--enable-version3` | `spike/…/01-build-changes.patch` |
+| 只删那个开关不够 | 首次构建失败：`gmp is version3 and --enable-version3 is not specified.` | `spike/…/README.md` §2.2 |
+| 真正拔掉的一条链 | `--enable-gnutls` → `nettle` → `gmp`，三者均为 (L)GPLv3+ | 同上；`FFmpeg/configure` 的 `EXTERNAL_LIBRARY_VERSION3_LIST` |
+
+**不用 v3 的三条理由**（LGPLv3 不是独立文本，是 GPLv3 之上的附加许可）：
+
+| 条款 | 要求 | iOS 上的现实 |
+| --- | --- | --- |
+| §4(e) → GPLv3 §6 | 对 "User Product" 提供**安装信息**，让用户能装上自己改过的版本 | 安装必经 Apple 签名/描述文件，**物理上不存在**这条路径 |
+| GPLv3 §3 | 作品不得成为"有效技术措施"的一环 | 与 FairPlay 冲突 |
+| GPLv3 §10 | 不得对作品施加额外限制 | App Store 条款本身即额外限制 |
+
+**v3 的好处我们用不上**：它相对 2.1 的实质增量是 §11 明示专利授权 + 与 Apache-2.0 兼容。
+本链所链的库（freetype / harfbuzz / fribidi / libass / dav1d / libplacebo / lcms2 / uavs3d）
+在 2.1 下均可用；把 gnutls 换成 SecureTransport 后，**唯一压在 v3 上的依赖链已拆除**。
+
+**代价（写清，不粉饰）**：
+
+1. **没有明示专利授权** —— GPLv3 §11 那层保护不存在，H.264/HEVC 专利池风险自担（见本文 §三）。
+2. **与 Apache-2.0 有摩擦** —— 所以 `spike/…/README.md` §2.4 的备用方案（改用 OpenSSL 3.3.5，
+   Apache-2.0）**不是"一行开关之差"的等价替换**，若要采用需单独评估兼容性。
+3. **义务不减** —— 仍是 LGPL：对应源码、许可文本、可替换性、修改声明四件一件都不能少。
+
 ---
 
 ## 二、四件交付物（`docs/23` §五 要的那四件）

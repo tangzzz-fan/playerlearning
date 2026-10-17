@@ -7,7 +7,7 @@
 
 ---
 
-## 1. 构建开关：动态化 + 压回 LGPL-2.1（`01-build-changes.patch`）
+## 1. 构建开关：动态化 + 停在 LGPL-2.1（`01-build-changes.patch`）
 
 改的是 **mpvkit 的构建脚本**（`Sources/BuildScripts/XCFrameworkBuild/main.swift`），
 不改 mpv / FFmpeg 的源码。

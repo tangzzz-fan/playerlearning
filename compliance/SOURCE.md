@@ -25,7 +25,7 @@
 
 | 文件 | 作用 | 详细说明 |
 | --- | --- | --- |
-| `01-build-changes.patch` | ① `-Ddefault_library=shared`（动态化）② 去掉 `--enable-version3` 与 gmp / nettle / gnutls 依赖（压回 LGPL-2.1） | [`MODIFICATIONS.md`](MODIFICATIONS.md) §1 |
+| `01-build-changes.patch` | ① `-Ddefault_library=shared`（动态化）② 去掉 `--enable-version3` 与 gmp / nettle / gnutls 依赖（行使 `or later` 选项，停在 LGPL-2.1，理由见 [`README.md`](README.md) §一） | [`MODIFICATIONS.md`](MODIFICATIONS.md) §1 |
 | `02-build-env-passthrough.patch` | 把 `WGETRC` 转发进构建子进程（受限网络的证书适配） | §2 |
 | `ffmpeg/0001-videotoolbox-metal-compatibility.patch` | VideoToolbox 输出的 `CVPixelBuffer` 兼容键从 OpenGLES 改成 **Metal** | §3 |
 
