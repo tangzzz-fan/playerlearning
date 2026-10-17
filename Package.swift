@@ -33,10 +33,15 @@ let package = Package(
             dependencies: ["PlayerMPV", "PlayerCore"],
             path: "MPV/Tests/PlayerMPVTests"
         ),
-        // 开发期用 `path:`：产物 104 MB，不进版本库（`.gitignore:19`），
-        // 由 `Tools/stage-libmpv.sh` 从构建目录落位。
-        // 发布形态需换成 `.binaryTarget(name: "Libmpv", url:checksum:)`（`docs/30` §七）。
-        .binaryTarget(name: "Libmpv", path: "MPV/Library/Libmpv.xcframework")
+        // 发布形态：产物挂在 Release 上按 tag 取，checksum 固定。
+        // 本机想改回本地产物时，把这一段换成
+        //   .binaryTarget(name: "Libmpv", path: "MPV/Library/Libmpv.xcframework")
+        // 两者只能二选一（SPM 没有条件式 binaryTarget）。取舍见 `docs/30` §八。
+        .binaryTarget(
+            name: "Libmpv",
+            url: "https://github.com/tangzzz-fan/playerstack/releases/download/v0.1.1/Libmpv.xcframework.zip",
+            checksum: "f98a0c3fa47f0a7cc7cb1c2d8160c892c3e584da478862dfa05a3c082caca0d6"
+        )
     ],
     swiftLanguageModes: [.v6]
 )

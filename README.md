@@ -1,4 +1,46 @@
-# playerlearning
+# PlayerStack
+
+iOS 优先 / macOS 跟进的播放器栈：**libmpv 单内核** + **可编程帧**（render API）。
+本地文件、网络点播、直播都能播，能播系统播放器播不了的格式（mkv / ASS 特效字幕 / 各种编码）。
+
+比"能播"更要紧的一点：**帧落在你自己的 `CVPixelBuffer` 里** —— 自绘字幕、滤镜链、2D→3D 都能接上去。
+这是它与 KSPlayer / VLCKit 这类"只负责播"的库的根本区别（[`docs/31`](docs/31-开源后路线.md) §三）。
+
+## 安装
+
+```swift
+// Package.swift
+dependencies: [
+    .package(url: "https://github.com/tangzzz-fan/playerstack.git", from: "0.1.1")
+],
+targets: [
+    .target(name: "YourApp", dependencies: [
+        .product(name: "PlayerCore", package: "playerstack"),
+        .product(name: "PlayerUI",   package: "playerstack"),
+        .product(name: "PlayerMPV",  package: "playerstack")   // iOS only
+    ])
+]
+```
+
+`PlayerCore` 零 UI 依赖（可单独做单元测试，不需要模拟器）；`PlayerUI` 是 SwiftUI 层；`PlayerMPV` 是 libmpv 适配器。
+**只有 iOS 有 libmpv slice** —— macOS 上 `PlayerMPV` 会编译成空模块（`P-096` 记了为什么），`PlayerCore` / `PlayerUI` 正常可用。
+
+装配顺序不可换：**先有输出表面 → 再造内核 → 最后造控制器**，见 [`docs/28`](docs/28-播放能力总览.md)。
+
+## 许可
+
+| 部分 | 许可 |
+| --- | --- |
+| 本仓库自己的代码（`PlayerCore` / `PlayerUI` / `PlayerMPV` / Demo / docs） | **MIT**，见 [`LICENSE`](LICENSE) |
+| 预编译产物 `Libmpv.xcframework`（GitHub Releases） | **LGPL-2.1**，对应源码 / 许可文本 / 可替换性 / 修改声明见 [`compliance/`](compliance/README.md) |
+
+两者是分开的：MIT 不会改变那个二进制里的 LGPL 义务，详见 `LICENSE` 末尾的 scope note。
+
+---
+
+> 以下为项目施工期的状态与证据记录（写给维护者自己看），对外使用只需上面三节。
+
+## 项目状态
 
 做一个**自己的 iOS 优先 / macOS 跟进播放器**：libmpv 单内核，本地文件 + 网络点播 + 直播全都要，能播系统播放器播不了的格式（mkv / ASS 特效字幕 / 各种编码）。
 
@@ -7,7 +49,7 @@
 §二 口径里的「可切清晰度」（`P5-T5`）**设计前提已答**（= 视频轨道切换，见 [`docs/14`](docs/14-P5-T5-HLS多码率调研.md)），
 但**尚未实现** ⇒ **`Phase 5` 仍不宣告关闭**。
 **直播源环境已补**（`mediamtx` + `ffmpeg`，一次性动作、不入仓库）⇒ **`P6-T1` 的播放端已在真机证通**（RTSP 真机 `playing`，见 [`docs/14`](docs/14-P5-T5-HLS多码率调研.md)）。
-真机已跑通 —— 两套环境各一台：家里 iPhone 16 Pro（`UKXWZ3FS84`）· 本机 Tang的iPhone（`3GMJYX32U9`），口径见 §⑦。
+真机已跑通 —— 两套环境各一台：家里 iPhone 16 Pro（`YOUR_TEAM_ID`）· 本机 Tang的iPhone（`〔公司 team〕`），口径见 §⑦。
 
 | 里程碑 | 状态 |
 | --- | --- |
@@ -48,7 +90,8 @@
 | [`docs/27-自绘字幕数据源.md`](docs/27-自绘字幕数据源.md) | **自绘字幕通了**：文本来自 `SubtitleTimeline`、按 `time-pos` 对表 · 三张不同时刻的截图作判据 · 与 mpv 那条不能同开 | 要做字幕排版 / 动效 / 字幕检索前 |
 | [`docs/28-播放能力总览.md`](docs/28-播放能力总览.md) | **给"要把它用到别处的人"的一页说明书**：三步装配 · 六个机制（线程 / 两种输出 / 时基 / 字幕 / 音频 / 取证）· 能力清单 · 边界 | 第一次接触这个项目 / 要往外移植时 |
 | [`docs/29-移植到JoveView-方案.md`](docs/29-移植到JoveView-方案.md) | **移植方案表**：目标链路（链接 → 解析 → mpv → 2D / 2D→3D）· 逐文件搬/改/不搬 · **作为依赖被消费前必改的 9 项** · Jove 侧 10 处 · 6 个待拍板决策 | 要在 JoveView 做在线浏览时 |
-| [`docs/30-导出物现状与欠缺.md`](docs/30-导出物现状与欠缺.md) | **这个包能不能交给别人用**：`v0.1.0` 已发布（合并适配器 / 40 MB 产物 / tag）· 现在 `path:` 指向仓库根可用，`url:` 等开源（private 资产 SPM 拿不到，实测 404）· **开源那一刻要改的三行** · 三级欠缺与状态 | 要发布 / 要让外部项目引这个包时 |
+| [`docs/30-导出物现状与欠缺.md`](docs/30-导出物现状与欠缺.md) | **这个包能不能交给别人用**：`v0.1.0` 已发布（合并适配器 / 40 MB 产物 / tag）· 开源后 `url:` 形态已实测双目标可链接 · 三级欠缺与状态 | 要发布 / 要让外部项目引这个包时 |
+| [`docs/31-开源后路线.md`](docs/31-开源后路线.md) | **开源之后做什么**：三条发展路线（推荐「可编程帧引擎」）· 三阶段九张票 · 为什么必须补 LICENSE 与新 tag · 敏感信息实测清单 · 三个待拍板 | 决定下一步做什么时 |
 | [`compliance/README.md`](compliance/README.md) | **LGPL 交付物总入口**：对应源码 + 许可文本 + 可替换性说明 + 修改声明（四件齐），每条事实都带可核对命令 | 上架前 / 有人来问许可时 |
 | [`docs/PITFALLS.md`](docs/PITFALLS.md) | **踩坑日志**（现象 → 根因 → 处置 → 防再犯），**编号只增不删**、条数以文件自身为准（`P-085`：别把总数抄到这里），末段为**跨项目移植区**（来源 Marquee / HabitLoop / meta 待回流清单） | **动手前扫一遍**，能省掉重复排查 |
 
@@ -284,17 +327,17 @@ xcrun devicectl device process launch --device <真机 UDID> --console --termina
 #      即"丢内容追直播边缘"，不回头取已删分片 ⇒ 不会因此崩（docs/19 §五）
 
 # ⑦ 真机（⚠️ 两套 Xcode 环境、两个 team ⇒ 构建时**命令行覆盖**，不改仓库）
-#   环境 A · 家里：team UKXWZ3FS84 · 真机 Tango / iPhone 16 Pro
-#   环境 B · 本机：team 3GMJYX32U9 · 真机 Tang的iPhone      ← `project.yml` 里写的是 A 的值
+#   环境 A · 家里：team YOUR_TEAM_ID · 真机 Tango / iPhone 16 Pro
+#   环境 B · 本机：team 〔公司 team〕 · 真机 Tang的iPhone      ← `project.yml` 里写的是 A 的值
 cd Demo && xcodegen generate
 xcodebuild -project PlayerStackDemo.xcodeproj -scheme PlayerStackDemo \
   -destination 'id=<真机 UDID，用 xcrun devicectl list devices 现查>' \
-  DEVELOPMENT_TEAM=3GMJYX32U9 \
+  DEVELOPMENT_TEAM=〔公司 team〕 \
   -derivedDataPath DD-Device-32U9 build
 xcrun devicectl device install app --device <UDID> \
   DD-Device-32U9/Build/Products/Debug-iphoneos/PlayerStackDemo.app
 #   ⚠️ 覆盖值必须同时对上两件事：**本机钥匙串里带私钥的 `Apple Development` 证书**
-#      （本机 = `3GMJYX32U9` · `Tang Tango (WU37464V73)`）与**覆盖该设备的通配描述文件**。
+#      （本机 = `〔公司 team〕` · `〔开发者 B〕 (〔证书编号 B〕)`）与**覆盖该设备的通配描述文件**。
 #      对不上会报 `No profiles for 'com.playerstack.demo'` 或
 #      `No "iOS Development" signing certificate matching team ID …` ——
 #      两条报错**都会把你带去查账号**，而真因是**环境不对**（见 `P-055`）。
@@ -346,7 +389,7 @@ xcrun devicectl device install app --device <UDID> \
 ## 目录结构
 
 ```
-playerlearning/
+playerstack/
 ├── docs/                  ← 我们的分析与决策（本仓库自己的产出）
 │   ├── 01…07-*.md
 │   └── assets/            ← 验证证据截图（p0t5a/ · p0t5b/）
