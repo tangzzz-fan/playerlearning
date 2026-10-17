@@ -44,6 +44,9 @@
 | [`docs/23-上架准备清单.md`](docs/23-上架准备清单.md) | 上架物料与合规项（图标 / 隐私清单 / 导出配置），以及**只有人能做的**那 8 项 | 要传 App Store 前 |
 | [`docs/24-RenderAPI取帧.md`](docs/24-RenderAPI取帧.md) | `P7-T3` 前半：**帧能不能取到手上**（`MPV_RENDER_API_TYPE_SW` 实测出帧）· 软件后端的代价 | 要动渲染结构前 |
 | [`docs/25-RenderAPI上屏与吞吐.md`](docs/25-RenderAPI上屏与吞吐.md) | `P7-T3` 后半：**帧上屏**（`CVPixelBuffer`→Metal→图层）· **吞吐实测与"不上 GPU 桥"的结论** · 帧下游第一刀（效果 + 自绘叠加层） | 要改渲染 / 做字幕自绘 / 评估全景 3D 前 |
+| [`docs/26-真机复验-render上屏.md`](docs/26-真机复验-render上屏.md) | **iPhone 16 Pro 上 render API 上屏打通** · 三层读数取证法 · 真机吞吐（4K 按上屏 11.5 ms）· `P-094` 那个坑的完整追查 | 要改渲染 / 要判断"真机行不行"前 |
+| [`docs/27-自绘字幕数据源.md`](docs/27-自绘字幕数据源.md) | **自绘字幕通了**：文本来自 `SubtitleTimeline`、按 `time-pos` 对表 · 三张不同时刻的截图作判据 · 与 mpv 那条不能同开 | 要做字幕排版 / 动效 / 字幕检索前 |
+| [`compliance/README.md`](compliance/README.md) | **LGPL 交付物总入口**：对应源码 + 许可文本 + 可替换性说明 + 修改声明（四件齐），每条事实都带可核对命令 | 上架前 / 有人来问许可时 |
 | [`docs/PITFALLS.md`](docs/PITFALLS.md) | **踩坑日志**（现象 → 根因 → 处置 → 防再犯），**编号只增不删**、条数以文件自身为准（`P-085`：别把总数抄到这里），末段为**跨项目移植区**（来源 Marquee / HabitLoop / meta 待回流清单） | **动手前扫一遍**，能省掉重复排查 |
 
 ## 工程结构
