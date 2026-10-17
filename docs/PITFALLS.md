@@ -2360,6 +2360,73 @@ var args: [UnsafePointer<CChar>?] = ["loadfile".withCString { $0 }, path, nil]
 
 ---
 
+## P-091 · `CTLineDraw` 会**推进** `textPosition`：描边 + 填充两遍画，字会**并排出现两次**
+
+**现象**：自绘字幕被并排画了两遍，像"同一句话重复了一次"，而且第二遍一直跑到画外。
+
+**根因**：`CTLineDraw` 画完之后会把上下文的 `textPosition` **推进到行末**（Core Text 的排版状态机行为）。
+先描边、再填充的常见写法里，第二遍从**第一遍的终点**开始画 —— 于是同一句话出现两次。
+
+**处置**：两遍之间**重设 `textPosition`**。
+
+```swift
+context.textPosition = origin
+context.setTextDrawingMode(.stroke)
+CTLineDraw(line, context)
+context.textPosition = origin      // ← 少这一行就重复
+context.setTextDrawingMode(.fill)
+CTLineDraw(line, context)
+```
+
+**防再犯**：凡是"同一行画两遍"（描边 + 填充、阴影 + 正文），都把 `textPosition` 当**输入**显式设置，
+不要依赖"上一次画完它还在原处"。
+
+---
+
+## P-092 · `vo=libmpv` 要求渲染上下文**早于** `loadfile`：晚了就是 `No render context set.`
+
+**现象**：render API 上屏第一版，`state=failed`、一帧都没有：
+
+```
+[mpv/vo/libmpv] No render context set.
+[mpv/cplayer] Error opening/initializing the selected video_out (--vo) device.
+[mpv/cplayer] finished playback, no audio or video data played (reason 4)
+```
+
+**根因**：mpv 在**打开 `vo=libmpv`** 的那一刻就要求渲染上下文已经存在。那一版为了避开
+"主线程隔离对象不能进 actor"（`P-093`），做成了"显示端在自己的下一拍里取句柄再建上下文"——
+**比 `loadfile` 晚了几毫秒**，于是整个文件加载失败。
+
+**处置**：顺序固定为 `mpv_initialize` → 建渲染上下文 → `loadfile`，
+即内核在发 `loadfile` **之前** `await` 显示端把上下文建好。
+
+**防再犯**：`docs/24` 只验过"先建上下文再 load"**能出帧**，**没验过反过来会怎样**。
+把一条验证过的路径的**顺序**调换后，那不是"等价写法"，而是**另一个未被验证的假设**。
+
+---
+
+## P-093 · Swift 6：`@MainActor` 的图层对象**不能**塞进 actor —— 要么改交接物，要么改隔离
+
+**现象**：`MPVKernel(renderOutput: output)`（内核握着显示端图层）编译报：
+
+```
+error: sending main actor-isolated 'output' to actor-isolated initializer 'init(renderOutput:)'
+       risks causing data races between actor-isolated and main actor-isolated uses
+```
+
+**根因**：这句话是**对的**。图层之后会同时被主线程（每帧画）和 actor（读状态）使用。
+`@unchecked Sendable` 也救不了：它只声明"可以跨域传"，而这里的问题是**两个隔离域真的会同时用**。
+
+**处置**：把"要交接的东西"从**对象**降级成**值** —— `MPVRenderBridge` 里只传一个 mpv 句柄
+（`Sendable` 的小盒子 + 一把锁）。内核不认识图层，图层也不认识内核；
+显示端在**自己的**主线程拍子里取走句柄、建上下文。
+
+**防再犯**：看到一个"把 UI 对象传给 actor"的写法先停一下 ——
+**能降级成值就降级**（句柄 / id / 闭包），降不了才去谈隔离域与锁。
+同族：`P-022`（`nonisolated deinit` + 非 Sendable）。
+
+---
+
 > ### 与既有条目同源、故不重复展开的（仅登记映射，便于日后合并检索）
 >
 > | 其他项目的条目 | 本项目已有 |

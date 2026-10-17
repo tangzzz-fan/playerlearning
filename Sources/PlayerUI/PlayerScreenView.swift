@@ -20,12 +20,12 @@ public struct PlayerScreenView: View {
     @State private var isPickingFile = false
     @State private var isPickingSubtitle = false
     @State private var autoHideTask: Task<Void, Never>?
-    private let surface: WindowEmbedOutput
+    private let surface: any VideoSurface
 
     /// ⚠️ surface **由外部传入**，不在内部创建：`wid` 句柄必须早于内核构造，
     /// 所以"建表面 → 建内核 → 建控制器"这个顺序必须留在 App 层看得见，
     /// 不能被一行 `PlayerScreenView(model:)` 藏起来。
-    public init(model: PlayerViewModel, surface: WindowEmbedOutput) {
+    public init(model: PlayerViewModel, surface: any VideoSurface) {
         _model = State(initialValue: model)
         self.surface = surface
     }

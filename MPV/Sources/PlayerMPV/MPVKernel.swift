@@ -104,6 +104,12 @@ private final class MPVHandleOwner: @unchecked Sendable {
 public actor MPVKernel: PlayerKernelProtocol {
     private var owner: MPVHandleOwner?
     private let windowEmbedHandle: Int64?
+    /// `render API` 那条路的**句柄交接点**（`docs/24`）。与 `windowEmbedHandle` **互斥**：
+    /// 给了它就不设 `wid`，帧由显示端取出来再画（见 `applyOptions` 与 `load`）。
+    ///
+    /// 这里刻意**只握着交接点、不握图层对象**：图层是 `@MainActor` 的，
+    /// 把它塞进 actor 就是"一个对象活在两个隔离域里"，Swift 6 会直接拒绝（`MPVRenderBridge` 的注释）。
+    private let renderBridge: MPVRenderBridge?
     /// 最近一次加载的资源。
     ///
     /// 存在的唯一理由是 `play()`：mpv 的 `stop` 会清空播放列表，
@@ -144,6 +150,7 @@ public actor MPVKernel: PlayerKernelProtocol {
     /// 会以**零报错**的形式重现（就是本票修掉的缺陷 a 的变体）。已记入 `docs/03`。
     public init() {
         windowEmbedHandle = nil
+        renderBridge = nil
     }
 
     /// 有画面的构造：`windowEmbedHandle` 是宿主原生窗口句柄（iOS 上是 `UIView` 的 `wid`）。
@@ -153,6 +160,17 @@ public actor MPVKernel: PlayerKernelProtocol {
     /// 参数**非可选**是刻意的 —— 想要无画面请走 `init()`，那是显式选择而非时序事故。
     public init(windowEmbedHandle: Int64) {
         self.windowEmbedHandle = windowEmbedHandle
+        renderBridge = nil
+    }
+
+    /// **render API 那条路的构造**：不设 `wid`，`vo=libmpv`，帧由 `renderOutput` 取出来画。
+    ///
+    /// 与 `init(windowEmbedHandle:)` **不是同一件事的两种写法**，而是两种结构（`docs/24` §一）：
+    /// `wid` 那条帧在播放器内部，这条帧在我们手里 —— 后者才能做自绘字幕 / 滤镜 / 全景 / 3D。
+    /// 参数**非可选**、且与句柄构造互斥：同时给两者只会得到"谁在画"说不清的局面。
+    public init(renderBridge: MPVRenderBridge) {
+        windowEmbedHandle = nil
+        self.renderBridge = renderBridge
     }
 
     public func events() async -> AsyncStream<PlayerKernelEvent> {
@@ -209,6 +227,18 @@ public actor MPVKernel: PlayerKernelProtocol {
         // （`mpv_create` + `mpv_initialize`）是起播成本的一部分，不能被排除在计时之外。
         beginStartupTimeline()
         let handle = try prepare(resource)
+        // 句柄交给显示端，并**在发 `loadfile` 之前**把渲染上下文建起来。
+        // ⚠️ 顺序是硬约束：mpv 打开 `vo=libmpv` 时如果渲染上下文还不存在，会直接
+        //    `No render context set.` ⇒ 整个文件加载失败（实测：state=failed、一帧都没有）。
+        if let renderBridge {
+            renderBridge.offer(handle)
+            do {
+                try await renderBridge.attachDisplay()
+            } catch {
+                emit(.stateChanged(.failed))
+                throw error
+            }
+        }
         lastResource = resource
         emit(.stateChanged(.preparing))
         try send(handle, ["loadfile", resource.url.absoluteString, "replace"])
@@ -348,8 +378,14 @@ public actor MPVKernel: PlayerKernelProtocol {
         continuation = nil
     }
 
-    public func shutdown() {
+    /// 收尾。**`async` 是为了 render 那条路**：渲染上下文挂在句柄上，必须在句柄销毁**之前**
+    /// 释放，而释放只能在主线程做（`mpv_render_context_*` 的同一线程要求）。
+    /// 做成同步版就得"同步跳主线程"，那会在主线程正等这个 actor 时死锁。
+    public func shutdown() async {
         finishEvents()
+        // ⚠️ 顺序不可换：先让显示端放掉渲染上下文，再销毁句柄 ——
+        //    上下文挂在句柄上，句柄没了它就是野指针（UAF 发生在退出路径上，几乎不会被发现）。
+        await renderBridge?.detachDisplay()
         owner = nil
     }
 
@@ -401,6 +437,13 @@ public actor MPVKernel: PlayerKernelProtocol {
             setOption(handle, "gpu-api", "vulkan")
             setOption(handle, "gpu-context", "moltenvk")
             setOption(handle, "hwdec", "videotoolbox")
+        } else if renderBridge != nil {
+            // render API：**不设 `wid`**，`vo` 用 `libmpv`（渲染由我们驱动）。
+            setOption(handle, "vo", "libmpv")
+            // 硬解在软件后端下没有意义：解出来的帧还要回 CPU 才能交给 `CVPixelBuffer`。
+            // 显式关掉，避免"以为省了"—— mpv 的默认 `auto` 在这里会让读数分辨不清
+            // "慢在解码还是慢在软件缩放"。
+            setOption(handle, "hwdec", "no")
         } else {
             setOption(handle, "vo", "null")
             setOption(handle, "hwdec", "no")

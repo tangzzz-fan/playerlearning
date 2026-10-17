@@ -6,7 +6,7 @@ private struct UncheckedPointer: @unchecked Sendable {
     let raw: UnsafeMutableRawPointer
 }
 
-public final class WindowEmbedOutput: CAMetalLayer, VideoOutputProtocol {
+public final class WindowEmbedOutput: CAMetalLayer, VideoOutputProtocol, VideoSurface {
     public override init() {
         super.init()
         configure()
@@ -54,6 +54,8 @@ public final class WindowEmbedOutput: CAMetalLayer, VideoOutputProtocol {
     ///
     /// 逻辑收在这里（而不是各平台各写一遍），因为"摆位置 + 防绘制尺寸退化"这件事
     /// **两个平台完全一样**，只有"从哪拿 scale"不同（`UITraitCollection` / `NSWindow`）。
+    ///
+    /// 只在主线程调用（`UIView.layoutSubviews` / `NSView.layout`）。
     public func layout(in bounds: CGRect, scale: CGFloat) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)

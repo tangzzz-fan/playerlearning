@@ -17,7 +17,7 @@ import SwiftUI
 @MainActor
 @Observable
 final class PlayerDemoModel {
-    let surface: WindowEmbedOutput
+    let surface: any VideoSurface
     let player: PlayerViewModel
     private(set) var note = ""
 
@@ -26,6 +26,8 @@ final class PlayerDemoModel {
     /// 协议上每加一条，所有内核（含测试里的假内核）都要实现一遍，
     /// 而"起播分成几段"只对真 mpv 有意义（见 `MPVKernel.startupTimeline()`）。
     private let mpvKernel: MPVKernel
+    /// `render API` 那条路的显示端（`docs/24`）。`wid` 那条路下它是 `nil`。
+    private let renderOutput: MPVRenderOutput?
     #endif
 
     private let traces = ProcessInfo.processInfo.arguments.contains("-traceUpdates")
@@ -33,20 +35,39 @@ final class PlayerDemoModel {
     private var memory: Task<Void, Never>?
 
     init() {
-        let surface = WindowEmbedOutput()
-        self.surface = surface
-
         #if os(iOS)
-        guard let handle = surface.windowEmbedHandle else {
-            // 表面一定给得出句柄（它就是自身指针）。走到这里说明实现坏了，
-            // ⇒ **大声死**，而不是静默退回无画面（那正是 `P2-T7` 要消灭的失败形态）。
-            fatalError("WindowEmbedOutput 未给出 wid 句柄")
+        // 两种视频输出**并存**（`docs/24` §四）：默认走 `wid`（唯一端到端验过真画面的那条），
+        // 只有显式给出 `-renderDisplay` / `-renderBench` 时才切成 render API。
+        // 反过来默认 render 会让"平时跑一下"变成一条未经验证的路 —— 那不是推进，是换地基。
+        if Self.usesRenderOutput {
+            let bridge = MPVRenderBridge()
+            let output: MPVRenderOutput
+            do {
+                output = try MPVRenderOutput(bridge: bridge, log: { Self.writeToStderr($0) })
+            } catch {
+                fatalError("render 输出初始化失败：\(error)")
+            }
+            renderOutput = output
+            surface = output
+            let kernel = MPVKernel(renderBridge: bridge)
+            mpvKernel = kernel
+            player = PlayerViewModel(controller: PlayerController(kernel: kernel))
+        } else {
+            let embed = WindowEmbedOutput()
+            surface = embed
+            renderOutput = nil
+            guard let handle = embed.windowEmbedHandle else {
+                // 表面一定给得出句柄（它就是自身指针）。走到这里说明实现坏了，
+                // ⇒ **大声死**，而不是静默退回无画面（那正是 `P2-T7` 要消灭的失败形态）。
+                fatalError("WindowEmbedOutput 未给出 wid 句柄")
+            }
+            let kernel = MPVKernel(windowEmbedHandle: handle)
+            mpvKernel = kernel
+            player = PlayerViewModel(controller: PlayerController(kernel: kernel))
         }
-        let kernel = MPVKernel(windowEmbedHandle: handle)
-        mpvKernel = kernel
-        player = PlayerViewModel(controller: PlayerController(kernel: kernel))
         #else
         // macOS：使用 stub kernel（Phase 7 只验证编译，运行时功能由 iOS 验证）
+        surface = WindowEmbedOutput()
         player = PlayerViewModel(controller: PlayerController(kernel: MacOSStubKernel()))
         #endif
 
@@ -55,6 +76,11 @@ final class PlayerDemoModel {
                 Self.writeToStderr("[trace] \(Self.stamp(at: origin)) \(update)")
             }
         }
+    }
+
+    /// 只有 `-renderDisplay` / `-renderBench` **两者之一**给出 URL 时才走 render API。
+    private static var usesRenderOutput: Bool {
+        renderDisplayURL != nil || renderBenchURL != nil
     }
 
     func start() async {
@@ -77,6 +103,10 @@ final class PlayerDemoModel {
             await soakTest(rounds: rounds)
         } else if let probeURL = renderProbeURL {
             await runRenderProbe(probeURL)
+        } else if let benchURL = Self.renderBenchURL {
+            await runRenderBench(benchURL)
+        } else if let displayURL = Self.renderDisplayURL {
+            await runRenderDisplay(displayURL)
         } else if ProcessInfo.processInfo.arguments.contains("-exerciseControls") {
             await exerciseControls()
         } else if ProcessInfo.processInfo.arguments.contains("-exerciseFinish") {
@@ -182,6 +212,103 @@ final class PlayerDemoModel {
         } catch {
             Self.writeToStderr("[render] 失败：\(error) · \(probe.diagnostics())")
         }
+        #endif
+    }
+
+    /// `-renderDisplay <url>`：走 **render API** 那条路上屏（帧先到我们手里，再画进图层）。
+    ///
+    /// 与 `-directURL` 的区别是结构性的（`docs/24`）：那条用 `wid`，帧在播放器内部；
+    /// 这条用 `MPV_RENDER_API_TYPE_SW` 把帧写进 `CVPixelBuffer`，再由 `MPVRenderOutput` 画上去。
+    private static var renderDisplayURL: URL? { urlArgument("-renderDisplay") }
+
+    /// `-renderBench <url>`：压帧量吞吐（`docs/24` §四 第 3 步）。
+    private static var renderBenchURL: URL? { urlArgument("-renderBench") }
+
+    private static func urlArgument(_ name: String) -> URL? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: name), index + 1 < arguments.count else { return nil }
+        return URL(string: arguments[index + 1])
+    }
+
+    private static func stringArgument(_ name: String) -> String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: name), index + 1 < arguments.count else { return nil }
+        return arguments[index + 1]
+    }
+
+    private func applyRenderOptions() {
+        #if os(iOS)
+        if let raw = Self.stringArgument("-renderEffect"), let effect = VideoEffect(rawValue: raw) {
+            renderOutput?.effect = effect
+            Self.writeToStderr("[render] effect=\(effect.rawValue)")
+        }
+        if let text = Self.stringArgument("-renderOverlay") {
+            renderOutput?.overlayText = text
+            Self.writeToStderr("[render] overlay=\(text)")
+        }
+        #endif
+    }
+
+    private func runRenderDisplay(_ url: URL) async {
+        #if os(iOS)
+        guard let output = renderOutput else { return }
+        applyRenderOptions()
+        note = "render API：\(url.lastPathComponent)"
+        await player.load(PlayerResource(url: url))
+        await player.play()
+        // 每秒一行 render 侧的状态：帧数 / 尺寸 / 耗时分布。
+        // **必须能持续读到**，否则"画面没出来"与"日志没打"分不开（`P-040` 同族）。
+        for _ in 0 ..< 60 {
+            try? await Task.sleep(for: .seconds(1))
+            let size = output.lastVideoSize
+            Self.writeToStderr(
+                "[render] frames=\(output.presentedFrames) size=\(Int(size.width))x\(Int(size.height))"
+                    + " effect=\(output.effect.rawValue) \(output.timings.summary)"
+            )
+        }
+        #endif
+    }
+
+    /// `-renderBench <url> [-renderBenchFrames n]`：量**每帧**要多久。
+    ///
+    /// ⚠️ 量之前先**暂停**：播着的时候 `mpv_render_context_render` 会**阻塞到该显示的时刻**
+    /// （mpv 的显示时间调度，见 `render.h` 的注释），那段是"等"不是"算"。
+    /// 把它算进耗时，得到的数字只反映帧率上限，跟后端快慢无关 —— 而我们要回答的正是后者。
+    private func runRenderBench(_ url: URL) async {
+        #if os(iOS)
+        guard let output = renderOutput else { return }
+        let frames = Int(Self.stringArgument("-renderBenchFrames") ?? "") ?? 120
+        if let raw = Self.stringArgument("-renderEffect"), let effect = VideoEffect(rawValue: raw) {
+            output.effect = effect
+        }
+        if let raw = Self.stringArgument("-renderTarget"), let target = MPVRenderOutput.RenderTarget(rawValue: raw) {
+            output.renderTarget = target
+        }
+        await player.load(PlayerResource(url: url))
+        await player.play()
+        var waited = 0
+        while output.presentedFrames == 0, waited < 150 {
+            try? await Task.sleep(for: .milliseconds(100))
+            waited += 1
+        }
+        await player.pause()
+        try? await Task.sleep(for: .milliseconds(500))
+        let size = output.lastVideoSize
+        guard size.width > 0 else {
+            Self.writeToStderr("[bench] 没有取到尺寸，放弃（可能源没解出画面）")
+            return
+        }
+        output.resetTimings()
+        for _ in 0 ..< frames {
+            output.step(force: true)
+        }
+        output.publishTimings()
+        Self.writeToStderr(
+            "[bench] source=\(Int(size.width))x\(Int(size.height)) target=\(output.renderTarget.rawValue)"
+                + " 压帧 \(output.presentedFrames)/\(frames)"
+        )
+        Self.writeToStderr("[bench] 整帧（mpv 软件渲染 + Metal 上屏）：\(output.timings.summary)")
+        Self.writeToStderr("[bench] 仅 mpv 软件渲染：\(output.renderTimings.summary)")
         #endif
     }
 

@@ -6,14 +6,14 @@ import UIKit
 import AppKit
 #endif
 
-/// 把 `WindowEmbedOutput`（本质是一个 `CAMetalLayer`）挂进 SwiftUI。
+/// 把任意 `VideoSurface`（本质是一个 `CAMetalLayer`）挂进 SwiftUI。
 ///
 /// ⚠️ 顺序是硬约束：**先有 surface，才有句柄，才能建内核** ——
 /// `wid` 必须在 `mpv_initialize` **之前**给定，否则内核静默走 `vo=null`（`docs/09` 缺陷 a）。
 public struct PlayerSurfaceView: View {
-    private let output: WindowEmbedOutput
+    private let output: any VideoSurface
 
-    public init(output: WindowEmbedOutput) {
+    public init(output: any VideoSurface) {
         self.output = output
     }
 
@@ -29,7 +29,7 @@ public struct PlayerSurfaceView: View {
 #if canImport(UIKit)
 
 private struct UIKitSurface: UIViewRepresentable {
-    let output: WindowEmbedOutput
+    let output: any VideoSurface
 
     func makeUIView(context: Context) -> UIView {
         LayerHostView(output: output)
@@ -41,9 +41,9 @@ private struct UIKitSurface: UIViewRepresentable {
 }
 
 private final class LayerHostView: UIView {
-    private let output: WindowEmbedOutput
+    private let output: any VideoSurface
 
-    init(output: WindowEmbedOutput) {
+    init(output: any VideoSurface) {
         self.output = output
         super.init(frame: .zero)
         backgroundColor = .black
@@ -68,7 +68,7 @@ private final class LayerHostView: UIView {
 #elseif canImport(AppKit)
 
 private struct AppKitSurface: NSViewRepresentable {
-    let output: WindowEmbedOutput
+    let output: any VideoSurface
 
     func makeNSView(context: Context) -> NSView {
         AppKitLayerHostView(output: output)
@@ -80,9 +80,9 @@ private struct AppKitSurface: NSViewRepresentable {
 }
 
 private final class AppKitLayerHostView: NSView {
-    private let output: WindowEmbedOutput
+    private let output: any VideoSurface
 
-    init(output: WindowEmbedOutput) {
+    init(output: any VideoSurface) {
         self.output = output
         super.init(frame: .zero)
         wantsLayer = true

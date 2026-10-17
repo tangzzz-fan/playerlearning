@@ -50,7 +50,9 @@ public final class MPVRenderProbe {
     }
 
     private var handle: OpaquePointer?
-    private var context: OpaquePointer?
+    /// 渲染上下文收敛到 `MPVSWSession`：它与上屏那条路（`MPVRenderOutput`）**只差最后一步**，
+    /// 建上下文 / 问尺寸 / 写内存完全一样，各写一遍只会漂。
+    private var session: MPVSWSession?
 
     /// mpv 自己的日志出口。取不到帧时**先听它说**，比在属性上猜快得多。
     public var log: ((String) -> Void)?
@@ -76,24 +78,17 @@ public final class MPVRenderProbe {
     }
 
     deinit {
-        if let context { mpv_render_context_free(context) }
+        // ⚠️ 顺序：render context **挂在句柄上**，必须在 `mpv_terminate_destroy` 之前放掉，
+        // 否则它会在一个已经销毁的句柄上做 free（野指针）。先置 nil 就是"先放它"。
+        session = nil
         if let handle { mpv_terminate_destroy(handle) }
     }
 
     /// 创建渲染上下文。**`MPV_RENDER_API_TYPE_SW` 就是"软件后端"这个事实的来源** ——
     /// 不是从字符串里猜的，是这一行真的被 mpv 接受了。
     public func createRenderContext() throws {
-        guard let handle, context == nil else { return }
-        var created: OpaquePointer?
-        let status: Int32 = "sw".withCString { apiType in
-            var params = [
-                mpv_render_param(type: MPV_RENDER_PARAM_API_TYPE, data: UnsafeMutableRawPointer(mutating: apiType)),
-                mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil)
-            ]
-            return mpv_render_context_create(&created, handle, &params)
-        }
-        guard status >= 0, let created else { throw Failure.renderContext(status) }
-        context = created
+        guard let handle, session == nil else { return }
+        session = try MPVSWSession(handle: handle)
     }
 
     public func load(_ url: URL) {
@@ -139,7 +134,7 @@ public final class MPVRenderProbe {
     public func captureFrame(
         width: Int = 640, height: Int = 360, seconds: Double = 6, pngURL: URL? = nil
     ) throws -> Result {
-        guard let handle, let context else { throw Failure.renderContext(-1) }
+        guard let handle, let session else { throw Failure.renderContext(-1) }
         let bytesPerRow = width * 4
         var buffer = [UInt8](repeating: 0, count: bytesPerRow * height)
         var bestBuffer = buffer
@@ -149,20 +144,11 @@ public final class MPVRenderProbe {
 
         while Date() < deadline {
             pump()
-            _ = mpv_render_context_update(context)
-            var size: [Int32] = [Int32(width), Int32(height)]
-            var stride = bytesPerRow
-            let status: Int32 = "rgba".withCString { format in
-                buffer.withUnsafeMutableBytes { raw in
-                    var params = [
-                        mpv_render_param(type: MPV_RENDER_PARAM_SW_SIZE, data: &size),
-                        mpv_render_param(type: MPV_RENDER_PARAM_SW_FORMAT, data: UnsafeMutableRawPointer(mutating: format)),
-                        mpv_render_param(type: MPV_RENDER_PARAM_SW_STRIDE, data: &stride),
-                        mpv_render_param(type: MPV_RENDER_PARAM_SW_POINTER, data: raw.baseAddress),
-                        mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil)
-                    ]
-                    return mpv_render_context_render(context, &params)
-                }
+            _ = session.update()
+            let status: Int32 = buffer.withUnsafeMutableBytes { raw in
+                session.render(
+                    into: raw.baseAddress!, width: width, height: height, stride: bytesPerRow, format: "rgba"
+                )
             }
             if status < 0 { throw Failure.render(status) }
             renders += 1
