@@ -26,9 +26,10 @@ dependencies: [
 ],
 targets: [
     .target(name: "YourApp", dependencies: [
-        .product(name: "PlayerCore", package: "playerstack"),
-        .product(name: "PlayerUI",   package: "playerstack"),
-        .product(name: "PlayerMPV",  package: "playerstack")   // iOS only
+        .product(name: "PlayerCore",      package: "playerstack"),
+        .product(name: "PlayerUI",        package: "playerstack"),
+        .product(name: "PlayerMPV",       package: "playerstack"),   // iOS only
+        .product(name: "PlayerProcessors", package: "playerstack")   // 帧处理器（GPU，可选）
     ])
 ]
 ```
@@ -36,8 +37,9 @@ targets: [
 > `package:` 写的是**仓库名** `playerstack`，不是清单里的 `name`（`PlayerStack`）。
 > 这两个不一样，写错会报 `product … not found in package`。
 
-三个包各管一段：`PlayerCore` 零 UI 依赖（状态机 / 时间模型 / 字幕时间轴，288 条测试不需要模拟器）·
-`PlayerUI` 是 SwiftUI 壳 · `PlayerMPV` 是 libmpv 适配器。
+四段各管一段：`PlayerCore` 零 UI 依赖（状态机 / 时间模型 / 字幕时间轴 / 帧处理器协议，
+单测不需要模拟器也不需要 Metal）· `PlayerUI` 是 SwiftUI 壳 · `PlayerMPV` 是 libmpv 适配器 ·
+`PlayerProcessors` 是 GPU 处理器的参考实现（现在有 LUT；用不着就别引）。
 
 ## 30 秒上手
 
@@ -80,20 +82,20 @@ await vm.play()
 | 项 | 情况 |
 | --- | --- |
 | iOS | 17.0+（真机 + 模拟器都有 slice） |
-| macOS | `PlayerCore` / `PlayerUI` 可用；**`PlayerMPV` 是空模块**（xcframework 无 macOS slice，`P-096`） |
+| macOS | `PlayerCore` / `PlayerUI` / `PlayerProcessors` 可用；**`PlayerMPV` 是空模块**（xcframework 无 macOS slice，`P-096`） |
 | 二进制体积 | `Libmpv.xcframework.zip` 40 MB，SPM 下载一次后走本地缓存 |
 | 工具链 | Swift 6 / Xcode 16+ |
 
 ## 状态
 
-`v0.1.1` · 386 条测试全绿（288 单元 + 98 UI 逻辑 + 适配器）· 真机 4K 按上屏 **11.51 ms/帧**（86 fps 上限）。
+`v0.1.1` + 未发布改动 · **430 条测试全绿**（321 单元 + 98 UI 逻辑 + 11 GPU 像素测）· 真机 4K 按上屏 **11.51 ms/帧**（86 fps 上限）。
 详见 [`docs/25`](docs/25-RenderAPI上屏与吞吐.md) 与 [`docs/26`](docs/26-真机复验-render上屏.md)。
 
 ## 许可
 
 | 部分 | 许可 |
 | --- | --- |
-| 本仓库自己的代码（`PlayerCore` / `PlayerUI` / `PlayerMPV` / Demo / docs） | **MIT**，见 [`LICENSE`](LICENSE) |
+| 本仓库自己的代码（`PlayerCore` / `PlayerUI` / `PlayerMPV` / `PlayerProcessors` / Demo / docs） | **MIT**，见 [`LICENSE`](LICENSE) |
 | 预编译产物 `Libmpv.xcframework`（GitHub Releases） | **LGPL-2.1** —— 对应源码 / 许可文本 / 可替换性 / 修改声明见 [`compliance/`](compliance/README.md) |
 
 两者是分开的：MIT 不会改变那个二进制里的 LGPL 义务，详见 `LICENSE` 末尾的 scope note。
@@ -103,7 +105,9 @@ await vm.play()
 
 | 想知道 | 读 |
 | --- | --- |
+| **这个版本改了什么**（会不会坏） | [`CHANGELOG.md`](CHANGELOG.md) |
 | **这条路往哪走**（定位 / 场景 / 能力缺口） | [`docs/32`](docs/32-帧管道路线.md) |
+| 处理器链：怎么插一个自己的处理器 | [`docs/33`](docs/33-处理器链.md) |
 | 能力全貌、六个机制、怎么装配 | [`docs/28`](docs/28-播放能力总览.md) |
 | 要把它移植到别的 App | [`docs/29`](docs/29-移植到JoveView-方案.md) |
 | 下一步做什么 | [`docs/31`](docs/31-开源后路线.md) |

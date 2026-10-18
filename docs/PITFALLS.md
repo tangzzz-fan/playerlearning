@@ -2500,6 +2500,91 @@ error: sending main actor-isolated 'output' to actor-isolated initializer 'init(
 
 ---
 
+## P-097 · 「断言什么都不该发生」的测试，会在**分支根本没进入**时通过
+
+**现象**：`FrameProcessorTests` 里 5 条测试第一次跑就全绿。它们是这些：
+
+```swift
+#expect(out.frame == FakeFrame(id: 2))   // 没被顶替 ⇒ 原帧
+#expect(out.applied.isEmpty)             // 没有处理器生效
+```
+
+**但那条分支（`.notReady` → 复用旧结果）一次都没进过。** 夹具长这样：
+
+```swift
+let depth = ScriptedProcessor("depth", order: 0, script: [Self.marker(100)])
+//                                  ↑ 默认输出是 .unchanged，脚本只给了第 1 次调用
+```
+
+第 2 次调用落到默认值 `.unchanged`，于是"什么都不该发生"自然成立 ——
+**测试断言的是"没发生"，而"没发生"的原因根本不是被测逻辑，是它压根没被走到。**
+
+**是怎么暴露的**：补了一条**正断言**的边界测试（`age == maxAgeFrames` **应该**复用），它红了：
+
+```
+✘ Test testHoldReusesAtExactlyMaxAge() — Expectation failed: out.frame == FakeFrame(id: 100)
+```
+
+—— 那一刻才知道前面 5 条是假绿。
+
+**判据**：
+- 一个测试若只断言"不该发生"（`isEmpty` / `== 原值` / `nil`），它**必须**有一条配对的
+  "该发生"测试（`== 期望值` / `count == 1`）；单独存在的否定断言只能证明"没崩"。
+- 更好的做法是让夹具**自证被调用**：记录 `receivedFrames.count`，并在同一测试里断言它。
+- 变异测试抓不到这一类 —— 变异改的是分支**内部**，分支没进入时改什么都一样（`P-017` 的近亲）。
+
+**同源**：`P-094`（判据选错）、`P-096`（判据太弱）—— 都不是代码错，是**验证方式错**。
+
+---
+
+## P-098 · 同一个检查写在两处、只测到其中一处 ⇒ 另一处的变异体**永远不会被抓**
+
+**现象**：`ColorLUT` 的 `dimension >= 2` 写在两个入口 —— `parse(_:)` 与公开 `init?`。
+跑 5 个变异体，只有"把 `init` 那处改成 `>= 1`"这一个**没被抓住**（4/5）。
+
+**根因**：所有测试都走 `parse` 入口，而 `parse` 在更早的地方就抛错（它自己也有一份守卫），
+所以 `init` 的守卫在这些测试路径上**根本不可达**。变异改的是永远不执行的代码 —— 改什么都一样。
+
+**处置**：补 `testPublicInitRejectsUnusableTables`，直接调公开 `init` 的三个拒绝条件
+（尺寸 1 / 份数不符 / domain 反向），重跑 **5/5**。
+
+**防再犯**：
+- 一条语义守卫写在两个入口时，**每个入口都要有测试**；"另一个地方也会检查"不是覆盖。
+- 变异报告里出现"没抓住"，先分清是**断言太弱**（`P-017`）还是**代码不可达**（本条）。
+  后者的修法是补入口，不是把断言写得更严。
+
+---
+
+## P-099 · `.managed` 在 iOS 上**编译期就不存在**，不是"运行时不可用"
+
+**现象**：`swift build`（macOS）全绿、429 条测试全绿；
+`xcodebuild -destination 'generic/platform=iOS'` 直接报：
+
+```
+LUTFrameProcessor.swift:127:71: error: 'managed' is unavailable in iOS
+```
+
+**根因**：`MTLStorageMode.managed` 是 macOS 独有的 case。只要源码里**提到它**，
+iOS 就编不过 —— 而 `device.hasUnifiedMemory ? .shared : .managed` 这种"跨平台通用"的写法
+在 macOS 上完全合法，于是只在 iOS 编译那一刻才暴露。
+
+**处置**：条件编译分开，不追求"一条表达式两边通用"：
+
+```swift
+#if os(macOS)
+descriptor.storageMode = device.hasUnifiedMemory ? .shared : .managed
+#else
+descriptor.storageMode = .shared
+#endif
+```
+
+**防再犯**：**只跑 `swift build` 等于没验过 iOS**。这条与 `P-096`（条件编译把模块编成空的）
+是同一类错的两种形态：那次是"编过了但里面什么都没有"，这次是"根本没为 iOS 编过"。
+判据固定为 `xcodebuild -scheme … -destination 'generic/platform=iOS'`。
+Metal / UIKit / AVFoundation 里有大量"iOS 上编译期不存在"的枚举 case，不能当运行时差异处理。
+
+---
+
 > ### 与既有条目同源、故不重复展开的（仅登记映射，便于日后合并检索）
 >
 > | 其他项目的条目 | 本项目已有 |
