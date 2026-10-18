@@ -4,6 +4,7 @@ import Observation
 import PlayerCore
 #if os(iOS)
 import PlayerMPV
+import PlayerProcessors
 #endif
 import PlayerUI
 import SwiftUI
@@ -266,6 +267,50 @@ final class PlayerDemoModel {
             renderOutput?.verifiesOnScreen = true
             Self.writeToStderr("[render] 上屏取证已开启（每 30 帧读回一次）")
         }
+        if let name = Self.stringArgument("-renderLUT") {
+            installLUT(named: name, on: renderOutput)
+        }
+        #endif
+    }
+
+    /// `-renderLUT <invert|identity> [-renderLUTSize n] [-renderLUTSync]`：
+    /// 把**第一个真实的帧处理器**接上去（`docs/34`）。
+    ///
+    /// 它要证的不是"加了个滤镜"，而是三件事同时在真机上成立：
+    /// 处理器能拿到帧 · 结果能被上屏用 · 接上之后帧率还够。
+    /// 前两件本机单测（`LUTFrameProcessorTests`）已经用像素读数钉死，第三件只能真机量。
+    ///
+    /// `-renderLUTSync` 让处理器**等 GPU 落地**再返回 —— 量帧预算时必须加，
+    /// 否则 `timings` 里不含那一趟 pass 的时间，看起来像"处理器免费"。
+    private func installLUT(named name: String, on output: MPVRenderOutput?) {
+        #if os(iOS)
+        guard let output else { return }
+        let size = Int(Self.stringArgument("-renderLUTSize") ?? "") ?? 33
+        let lut: ColorLUT?
+        switch name {
+        case "invert": lut = ColorLUT.inverted(dimension: size)
+        case "identity": lut = ColorLUT.identity
+        default:
+            Self.writeToStderr("[lut] 不认识的名字：\(name)（可用 invert / identity）")
+            return
+        }
+        guard let lut else {
+            Self.writeToStderr("[lut] 造不出这张表：name=\(name) size=\(size)")
+            return
+        }
+        do {
+            let processor = try LUTFrameProcessor(
+                lut: lut, device: output.processingDevice, queue: output.processingQueue
+            )
+            processor.waitsForCompletion = ProcessInfo.processInfo.arguments.contains("-renderLUTSync")
+            output.framePipeline = FramePipeline(processors: [processor])
+            Self.writeToStderr(
+                "[lut] 已接上 name=\(name) size=\(lut.dimension)"
+                    + " sync=\(processor.waitsForCompletion) order=\(processor.order)"
+            )
+        } catch {
+            Self.writeToStderr("[lut] 接上失败：\(error)")
+        }
         #endif
     }
 
@@ -334,6 +379,9 @@ final class PlayerDemoModel {
         if let raw = Self.stringArgument("-renderTarget"), let target = MPVRenderOutput.RenderTarget(rawValue: raw) {
             output.renderTarget = target
         }
+        if let name = Self.stringArgument("-renderLUT") {
+            installLUT(named: name, on: output)
+        }
         await player.load(PlayerResource(url: url))
         await player.play()
         var waited = 0
@@ -356,6 +404,14 @@ final class PlayerDemoModel {
         Self.writeToStderr(
             "[bench] source=\(Int(size.width))x\(Int(size.height)) target=\(output.renderTarget.rawValue)"
                 + " 压帧 \(output.presentedFrames)/\(frames)"
+        )
+        // 处理器链的实际产出：`applied` 空 ⇒ 这一帧**没加工**（接上了也可能等于没接），
+        // `lag` 大于 0 ⇒ 上屏的画面与时间对不上。这两个数字比"帧率"更能说明链路的真假。
+        let pipeline = output.lastPipelineOutput
+        Self.writeToStderr(
+            "[bench] pipeline=" + (pipeline.map {
+                "applied=[\($0.applied.map(\.identifier).joined(separator: ","))] lag=\($0.maxLagFrames)"
+            } ?? "off")
         )
         Self.writeToStderr("[bench] 整帧（mpv 软件渲染 + Metal 上屏）：\(output.timings.summary)")
         Self.writeToStderr("[bench] 仅 mpv 软件渲染：\(output.renderTimings.summary)")

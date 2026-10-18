@@ -10,13 +10,18 @@ let package = Package(
         // `PlayerMPV` 在**根清单**里，不再是一个子目录包。
         // 原因：SPM 的 `url:` 依赖只解析仓库根的 `Package.swift`，子目录包对外部消费者不可见
         // —— 那会让这个仓库永远只能被 `path:` 引用（`docs/30` A1 / 实测证据 3）。
-        .library(name: "PlayerMPV", targets: ["PlayerMPV"])
+        .library(name: "PlayerMPV", targets: ["PlayerMPV"]),
+        // 处理器参考实现（GPU）。与 `PlayerMPV` **解耦**：它只依赖 `PlayerCore` 的协议，
+        // 不碰 libmpv ⇒ iOS 与 macOS 都能构建、都能单测（Metal 在本机 macOS 上可用）。
+        .library(name: "PlayerProcessors", targets: ["PlayerProcessors"])
     ],
     targets: [
         .target(name: "PlayerCore"),
         .target(name: "PlayerUI", dependencies: ["PlayerCore"]),
+        .target(name: "PlayerProcessors", dependencies: ["PlayerCore"]),
         .testTarget(name: "PlayerCoreTests", dependencies: ["PlayerCore"]),
         .testTarget(name: "PlayerUITests", dependencies: ["PlayerCore", "PlayerUI"]),
+        .testTarget(name: "PlayerProcessorsTests", dependencies: ["PlayerProcessors", "PlayerCore"]),
         .target(
             name: "PlayerMPV",
             dependencies: [

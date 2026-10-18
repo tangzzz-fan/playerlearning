@@ -23,6 +23,9 @@ targets:
         product: PlayerUI
       - package: PlayerStack
         product: PlayerMPV
+      # 处理器参考实现（LUT）。`-renderLUT` 那个调试入口用它。
+      - package: PlayerStack
+        product: PlayerProcessors
     info:
       path: Info.plist
       properties:

@@ -134,6 +134,37 @@ public final class MPVRenderOutput: CAMetalLayer, VideoOutputProtocol, VideoSurf
     /// 上一次真正设进叠加层的文本 —— 用来**只在内容变化时**重建纹理。
     private var liveSubtitleText: String?
 
+    /// **帧处理器链**（`PlayerCore.FramePipeline`，`Frame` 在这里实例化成 `MTLTexture`）。
+    ///
+    /// 与 `subtitleSource` 是**两层，不是同类**，别再合成一个：
+    /// - `subtitleSource` → **叠加层**：画在画面**之上**，下游看到的帧没变
+    /// - `framePipeline` → **加工层**：**改写**这一帧，下游拿到的是改过的
+    ///
+    /// `nil`（默认）= 这段代码根本不执行 —— 与没有这一层时的渲染逐字节一致。
+    public var framePipeline: FramePipeline<MTLTexture>? {
+        didSet {
+            // 换处理器链 = 换语义，旧的中间结果没有归属（见 `FramePipeline.setProcessors`）。
+            framePipeline?.reset()
+            redrawFlag.set()
+        }
+    }
+
+    /// 管道上一次的产出。取证用：`applied` 为空 ⇒ 这一帧没加工；`maxLagFrames > 0` ⇒ 画面晚了几帧。
+    ///
+    /// 只有 1 个纹理会因此被多持有一帧（下一帧就被覆盖），不会养住整个池。
+    public private(set) var lastPipelineOutput: FramePipelineOutput<MTLTexture>?
+
+    /// 造处理器要用的设备与队列（`PlayerProcessors` 侧需要这一对）。
+    ///
+    /// **队列必须是这同一个**：处理器提交完之后不等待，靠的是"同一队列内按提交顺序执行"
+    /// 这条 Metal 保证（`MetalPassProcessor` 的类注释）。给处理器另起一条队列，
+    /// 处理器那一趟 pass 与上屏之间就没有顺序关系了 —— 表现是偶发的一帧花屏/旧画面。
+    public var processingDevice: MTLDevice { metalDevice }
+    public var processingQueue: MTLCommandQueue { queue }
+    /// 交给处理器的帧号（从 0 起）。**seek 之后不清零** —— 它只用来算"迟到几帧"，
+    /// 清零反而会让旧结果看起来"比这一帧还新"（`FramePipeline` 会把 age < 1 判为不可用）。
+    private var frameIndex = 0
+
     /// 自绘叠加层（**字幕机制的第一版**：由我们画字、合成到帧上，而不是 mpv 画）。
     public var overlayText: String? {
         didSet {
@@ -214,6 +245,9 @@ public final class MPVRenderOutput: CAMetalLayer, VideoOutputProtocol, VideoSurf
         let flag = updateFlag
         session.setUpdates { flag.set() }
         self.session = session
+        // 新会话 ⇒ 旧的处理器结果对应的是上一个片源，一律作废。
+        framePipeline?.reset()
+        lastPipelineOutput = nil
         startDisplayLink()
         log("[render] attach 完成 · 后端=sw · 驱动=CADisplayLink")
     }
@@ -235,6 +269,13 @@ public final class MPVRenderOutput: CAMetalLayer, VideoOutputProtocol, VideoSurf
         timingRecorder = FrameTimingRecorder()
         renderRecorder = FrameTimingRecorder()
         presentedFrames = 0
+    }
+
+    /// 让处理器链忘掉"上一次结果"。**seek 之后必须调** ——
+    /// 否则跳转后的第一帧会被上一次的结果顶替，画面停在跳转前的位置（`docs/33` §三）。
+    public func resetFramePipeline() {
+        framePipeline?.reset()
+        lastPipelineOutput = nil
     }
 
     /// 渲染上下文建好了没有。内核用它判断"这一次 load 要不要 attach"。
@@ -362,7 +403,7 @@ public final class MPVRenderOutput: CAMetalLayer, VideoOutputProtocol, VideoSurf
         guard let texture = makeTexture(from: buffer, width: target.width, height: target.height) else { return }
 
         draw(
-            texture: texture,
+            texture: processed(texture, target: target),
             drawable: drawable,
             content: CGSize(width: target.width, height: target.height),
             sampleAfterDraw: verifiesOnScreen && (presentedFrames + 1) % 30 == 0
@@ -372,6 +413,30 @@ public final class MPVRenderOutput: CAMetalLayer, VideoOutputProtocol, VideoSurf
         timingRecorder.record(milliseconds: Self.milliseconds(finished - started))
         presentedFrames += 1
         publishTimings()
+    }
+
+    /// 处理器链的**唯一插入点**：帧已经到手（`MTLTexture`）、还没上屏。
+    ///
+    /// 位置不能挪：
+    /// - 挪到 `makeTexture` 之前 —— 那时还没有 GPU 纹理，处理器无帧可用
+    /// - 挪进 `draw` —— 那里已经在填着色器参数，等于让每种处理器都改一遍 `draw`
+    ///
+    /// 默认无管道时**直接返回原纹理**，不建上下文、不分配，开销为零。
+    private func processed(_ texture: MTLTexture, target: (width: Int, height: Int)) -> MTLTexture {
+        guard let pipeline = framePipeline else { return texture }
+        let output = pipeline.submit(
+            texture,
+            context: FrameContext(
+                index: frameIndex,
+                // 用 mpv 的显示时刻，不用墙钟 —— 与自绘字幕同一套对齐口径。
+                presentationTime: session?.timePosition(),
+                width: target.width,
+                height: target.height
+            )
+        )
+        frameIndex += 1
+        lastPipelineOutput = output
+        return output.frame
     }
 
     private func draw(texture: MTLTexture, drawable: CAMetalDrawable, content: CGSize, sampleAfterDraw: Bool = false) {
